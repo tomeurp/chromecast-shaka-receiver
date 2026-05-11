@@ -40,7 +40,7 @@ function makeDebugPayloadForExport() {
   const fullText = debugTextCache || buildDebugText();
   const payload = {
     type: 'generic-shaka-receiver-debug',
-    version: 71,
+    version: 72,
     generatedAt: new Date().toISOString(),
     userAgent: navigator.userAgent,
     location: location.href,
@@ -82,18 +82,18 @@ async function showDebugQr() {
   const payload = makeDebugPayloadForExport();
   const encoded = base64UrlEncodeUtf8(payload);
   const dataUrl = `data:application/json;base64,${encoded}`;
-  const compact = `DBG71:${encoded}`;
+  const compact = `DBG72:${encoded}`;
 
   qrPanel.classList.add('visible');
 
   // QR practical limit: keep it short. If too long, encode the tail plus an instruction.
   let qrData = compact;
-  let label = `DBG71 base64url JSON chars=${encoded.length}`;
+  let label = `DBG72 base64url JSON chars=${encoded.length}`;
 
   if (compact.length > 1800) {
     const slimPayload = JSON.stringify({
       type: 'generic-shaka-receiver-debug-slim',
-      version: 71,
+      version: 72,
       generatedAt: new Date().toISOString(),
       status: statusEl ? statusEl.textContent : '',
       errorHint: recentLines.slice(-20).join('\n'),
@@ -103,8 +103,8 @@ async function showDebugQr() {
       manifestInfo: lastManifestInfo,
     }, null, 2);
     const slim = base64UrlEncodeUtf8(slimPayload);
-    qrData = `DBG71:${slim}`;
-    label = `DBG71 slim base64url JSON chars=${slim.length}; full=${encoded.length}`;
+    qrData = `DBG72:${slim}`;
+    label = `DBG72 slim base64url JSON chars=${slim.length}; full=${encoded.length}`;
   }
 
   qrText.textContent = label + '\n' + qrData.slice(0, 240) + (qrData.length > 240 ? '…' : '');
@@ -749,7 +749,14 @@ async function main() {
   try {
     context.addCustomMessageListener('urn:x-cast:debug', event => {
       try {
-        const data = event && event.data ? event.data : {};
+        let data = event && event.data ? event.data : {};
+        if (typeof data === 'string') {
+          try {
+            data = JSON.parse(data);
+          } catch (_) {
+            data = { action: data };
+          }
+        }
         debugLine('DEBUG MESSAGE', data);
         if (data.action === 'enableDebug') enableDebug('remote message');
         if (data.action === 'showQr') {

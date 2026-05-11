@@ -57,3 +57,14 @@ session.sendMessage('urn:x-cast:debug', { action: 'showQr' });
 session.sendMessage('urn:x-cast:debug', { action: 'nextPage' });
 session.sendMessage('urn:x-cast:debug', { action: 'prevPage' });
 ```
+
+
+## v7.2 sender message format
+
+`CastSession.sendMessage()` must send a string, not a raw object:
+
+```js
+session.sendMessage('urn:x-cast:debug', JSON.stringify({ action: 'showQr' }));
+```
+
+The receiver now accepts both JSON strings and plain action strings.
