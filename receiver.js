@@ -5,6 +5,10 @@ const debugPrevBtn = document.getElementById('debugPrev');
 const debugNextBtn = document.getElementById('debugNext');
 const debugAutoBtn = document.getElementById('debugAuto');
 const debugPageLabel = document.getElementById('debugPageLabel');
+const debugQrBtn = document.getElementById('debugQr');
+const qrPanel = document.getElementById('qrPanel');
+const qrCanvas = document.getElementById('qrCanvas');
+const qrText = document.getElementById('qrText');
 
 let player = null;
 let lastObjectUrl = null;
@@ -20,6 +24,107 @@ let debugTextCache = '';
 let debugPage = 0;
 let debugAutoScroll = true;
 let debugAutoTimer = null;
+
+
+function base64UrlEncodeUtf8(text) {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function makeDebugPayloadForExport() {
+  const fullText = debugTextCache || buildDebugText();
+  const payload = {
+    type: 'generic-shaka-receiver-debug',
+    version: 6,
+    generatedAt: new Date().toISOString(),
+    userAgent: navigator.userAgent,
+    location: location.href,
+    status: statusEl ? statusEl.textContent : '',
+    lastLoad,
+    lastRequest,
+    lastResponse,
+    videoSnapshot: lastVideoSnapshot || videoSnapshot('qr-export'),
+    tracks: lastTracks,
+    manifestInfo: lastManifestInfo,
+    recentLines,
+    fullText,
+  };
+  return JSON.stringify(payload, null, 2);
+}
+
+// Minimal QR generator would be too heavy for all payload sizes.
+// Use qrserver public image API for compact payloads; for large logs show a data URL text payload.
+// Chromecast only needs to display it. No receiver data is sent to our app.
+function renderQrToCanvasFromImageUrl(url) {
+  return new Promise((resolve, reject) => {
+    const ctx = qrCanvas.getContext('2d');
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, qrCanvas.width, qrCanvas.height);
+      ctx.drawImage(img, 0, 0, qrCanvas.width, qrCanvas.height);
+      resolve();
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+async function showDebugQr() {
+  if (!qrPanel || !qrCanvas || !qrText) return;
+
+  const payload = makeDebugPayloadForExport();
+  const encoded = base64UrlEncodeUtf8(payload);
+  const dataUrl = `data:application/json;base64,${encoded}`;
+  const compact = `DBG6:${encoded}`;
+
+  qrPanel.classList.add('visible');
+
+  // QR practical limit: keep it short. If too long, encode the tail plus an instruction.
+  let qrData = compact;
+  let label = `DBG6 base64url JSON chars=${encoded.length}`;
+
+  if (compact.length > 1800) {
+    const slimPayload = JSON.stringify({
+      type: 'generic-shaka-receiver-debug-slim',
+      version: 6,
+      generatedAt: new Date().toISOString(),
+      status: statusEl ? statusEl.textContent : '',
+      errorHint: recentLines.slice(-20).join('\n'),
+      lastRequest,
+      lastResponse,
+      videoSnapshot: lastVideoSnapshot || videoSnapshot('qr-export-slim'),
+      manifestInfo: lastManifestInfo,
+    }, null, 2);
+    const slim = base64UrlEncodeUtf8(slimPayload);
+    qrData = `DBG6:${slim}`;
+    label = `DBG6 slim base64url JSON chars=${slim.length}; full=${encoded.length}`;
+  }
+
+  qrText.textContent = label + '\n' + qrData.slice(0, 240) + (qrData.length > 240 ? '…' : '');
+
+  const api = 'https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=8&data=' + encodeURIComponent(qrData);
+  try {
+    await renderQrToCanvasFromImageUrl(api);
+    debugLine('QR DEBUG generated', label);
+  } catch (e) {
+    const ctx = qrCanvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, qrCanvas.width, qrCanvas.height);
+    ctx.fillStyle = '#000';
+    ctx.font = '16px monospace';
+    ctx.fillText('QR image failed', 20, 40);
+    ctx.fillText('See text below', 20, 64);
+    debugLine('QR DEBUG failed', String(e && e.message || e));
+  }
+}
+
 
 
 function updateDebugPageLabel() {
@@ -80,6 +185,7 @@ function setupDebugControls() {
   if (!debugEl) return;
   debugPrevBtn && debugPrevBtn.addEventListener('click', () => scrollDebugByPages(-1));
   debugNextBtn && debugNextBtn.addEventListener('click', () => scrollDebugByPages(1));
+  debugQrBtn && debugQrBtn.addEventListener('click', () => showDebugQr());
   debugAutoBtn && debugAutoBtn.addEventListener('click', () => {
     debugAutoScroll = !debugAutoScroll;
     if (debugAutoScroll) {
@@ -97,6 +203,8 @@ function setupDebugControls() {
   window.addEventListener('keydown', ev => {
     if (!debugEnabled) return;
     const key = ev.key;
+    if (key === 'q' || key === 'Q') { ev.preventDefault(); showDebugQr(); return; }
+    if (key === 'Escape' && qrPanel && qrPanel.classList.contains('visible')) { ev.preventDefault(); qrPanel.classList.remove('visible'); return; }
     if (key === 'ArrowDown' || key === 'PageDown' || key === 'MediaTrackNext') { ev.preventDefault(); scrollDebugByPages(1); }
     else if (key === 'ArrowUp' || key === 'PageUp' || key === 'MediaTrackPrevious') { ev.preventDefault(); scrollDebugByPages(-1); }
     else if (key === 'ArrowRight') { ev.preventDefault(); scrollDebugByPages(1); }
@@ -292,7 +400,7 @@ function buildDebugText(extra = '') {
     '=================================',
     `time: ${new Date().toISOString()}`,
     `status: ${statusEl ? statusEl.textContent : ''}`,
-    `debugAutoScroll: ${debugAutoScroll} · use arrows/PageUp/PageDown/Enter if available`,
+    `debugAutoScroll: ${debugAutoScroll} · use arrows/PageUp/PageDown/Enter; Q = QR log`,
     '',
     'LAST LOAD:',
     safeJson(lastLoad, 2500),

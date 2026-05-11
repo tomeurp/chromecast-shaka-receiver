@@ -90,6 +90,56 @@
       font-size: 12px;
     }
 
+
+    #qrPanel {
+      display: none;
+      position: absolute;
+      right: 24px;
+      bottom: 24px;
+      width: 360px;
+      max-width: calc(100% - 48px);
+      box-sizing: border-box;
+      padding: 12px;
+      background: rgba(0,0,0,0.94);
+      border: 1px solid rgba(255,255,255,0.35);
+      border-radius: 12px;
+      color: #fff;
+      z-index: 40;
+      font: 12px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      box-shadow: 0 8px 36px rgba(0,0,0,0.55);
+    }
+
+    #qrPanel.visible {
+      display: block;
+    }
+
+    #qrCanvas {
+      width: 320px;
+      height: 320px;
+      max-width: 100%;
+      display: block;
+      margin: 8px auto;
+      background: #fff;
+      image-rendering: pixelated;
+    }
+
+    #qrText {
+      word-break: break-all;
+      max-height: 120px;
+      overflow: auto;
+      opacity: 0.9;
+    }
+
+    #qrTitle {
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    #qrHint {
+      opacity: 0.75;
+      margin-top: 6px;
+    }
+
     body.debug #debugOverlay {
       display: block;
     }
@@ -106,10 +156,17 @@
     <button id="debugPrev" class="debug-button">◀ Prev</button>
     <button id="debugNext" class="debug-button">Next ▶</button>
     <button id="debugAuto" class="debug-button">Auto</button>
+    <button id="debugQr" class="debug-button">QR Log</button>
     <span id="debugPageLabel">Page 1/1</span>
     <span id="debugHint">Use ←/→, ↑/↓, PageUp/PageDown or OK/Enter</span>
   </div>
   <pre id="debugOverlay">Debug overlay ready</pre>
+  <div id="qrPanel">
+    <div id="qrTitle">Debug log QR</div>
+    <canvas id="qrCanvas" width="320" height="320"></canvas>
+    <div id="qrText"></div>
+    <div id="qrHint">Escanea el QR. Si es demasiado largo, copia el texto corto mostrado o usa páginas Prev/Next para revisar el log.</div>
+  </div>
 
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.10.9/shaka-player.compiled.js"></script>
