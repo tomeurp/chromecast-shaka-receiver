@@ -22,7 +22,7 @@ let lastTracks = null;
 let lastManifestInfo = null;
 let debugTextCache = '';
 let debugPage = 0;
-let debugAutoScroll = false;
+let debugAutoScroll = true;
 let debugAutoTimer = null;
 
 
@@ -197,13 +197,11 @@ function setupDebugControls() {
     else if (key === 'ArrowUp' || key === 'PageUp' || key === 'MediaTrackPrevious') { ev.preventDefault(); scrollDebugByPages(-1); }
     else if (key === 'ArrowRight') { ev.preventDefault(); scrollDebugByPages(1); }
     else if (key === 'ArrowLeft') { ev.preventDefault(); scrollDebugByPages(-1); }
-    else if (key === 'Enter' || key === 'OK' || key === 'Accept') {
+    else if (key === 'Enter' || key === ' ') {
       ev.preventDefault();
-      showDebugQr();
-    }
-    else if (key === ' ') {
-      ev.preventDefault();
-      showDebugQr();
+      debugAutoScroll = !debugAutoScroll;
+      if (debugAutoScroll) debugEl.scrollTop = debugEl.scrollHeight;
+      updateDebugPageLabel();
     }
     else if (key === 'Home') { ev.preventDefault(); debugAutoScroll = false; scrollDebugToPage(0); }
     else if (key === 'End') { ev.preventDefault(); debugAutoScroll = true; debugEl.scrollTop = debugEl.scrollHeight; updateDebugPageLabel(); }
@@ -390,7 +388,7 @@ function buildDebugText(extra = '') {
     '=================================',
     `time: ${new Date().toISOString()}`,
     `status: ${statusEl ? statusEl.textContent : ''}`,
-    `debugAutoScroll: ${debugAutoScroll} · use arrows/PageUp/PageDown; OK/Enter/Q = QR log`,
+    `debugAutoScroll: ${debugAutoScroll} · use arrows/PageUp/PageDown/Enter; Q = QR log`,
     '',
     'LAST LOAD:',
     safeJson(lastLoad, 2500),
@@ -754,6 +752,24 @@ async function main() {
           showDebugQr();
         }
         if (data.action === 'hideQr' && qrPanel) qrPanel.classList.remove('visible');
+        if (data.action === 'exportLog' || data.action === 'getLog') {
+          enableDebug('remote exportLog');
+          const payload = makeDebugPayloadForExport();
+          try {
+            context.sendCustomMessage(
+              'urn:x-cast:debug',
+              event.senderId,
+              {
+                type: 'debugLog',
+                payload,
+                generatedAt: new Date().toISOString()
+              }
+            );
+            debugLine('DEBUG LOG sent to sender', { bytes: payload.length, senderId: event.senderId });
+          } catch (sendError) {
+            debugLine('DEBUG LOG send failed', String(sendError && sendError.message || sendError));
+          }
+        }
         if (data.action === 'nextPage') scrollDebugByPages(1);
         if (data.action === 'prevPage') scrollDebugByPages(-1);
         if (data.action === 'auto') {
