@@ -36,27 +36,79 @@
       left: 16px;
       top: 16px;
       width: calc(100% - 32px);
-      max-height: calc(100% - 32px);
+      height: calc(100% - 32px);
       overflow: auto;
       box-sizing: border-box;
-      padding: 14px 16px;
-      background: rgba(0, 0, 0, 0.82);
+      padding: 56px 16px 16px;
+      background: rgba(0, 0, 0, 0.86);
       color: #d7ffd7;
       font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       white-space: pre-wrap;
       border: 1px solid rgba(255,255,255,0.22);
       border-radius: 10px;
       z-index: 20;
+      scroll-behavior: auto;
+    }
+
+    #debugControls {
+      display: none;
+      position: absolute;
+      left: 16px;
+      top: 16px;
+      right: 16px;
+      height: 48px;
+      box-sizing: border-box;
+      padding: 8px 12px;
+      background: rgba(20, 20, 20, 0.94);
+      color: #fff;
+      font: 13px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 10px 10px 0 0;
+      z-index: 25;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .debug-button {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.35);
+      border-radius: 7px;
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      padding: 6px 10px;
+      font: inherit;
+    }
+
+    #debugPageLabel {
+      opacity: 0.95;
+      min-width: 180px;
+    }
+
+    #debugHint {
+      opacity: 0.75;
+      margin-left: auto;
+      font-size: 12px;
     }
 
     body.debug #debugOverlay {
       display: block;
+    }
+
+    body.debug #debugControls {
+      display: flex;
     }
   </style>
 </head>
 <body>
   <video id="video" autoplay playsinline></video>
   <div id="status">Ready</div>
+  <div id="debugControls">
+    <button id="debugPrev" class="debug-button">◀ Prev</button>
+    <button id="debugNext" class="debug-button">Next ▶</button>
+    <button id="debugAuto" class="debug-button">Auto</button>
+    <span id="debugPageLabel">Page 1/1</span>
+    <span id="debugHint">Use ←/→, ↑/↓, PageUp/PageDown or OK/Enter</span>
+  </div>
   <pre id="debugOverlay">Debug overlay ready</pre>
 
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>

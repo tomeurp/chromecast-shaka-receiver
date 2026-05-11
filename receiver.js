@@ -1,6 +1,10 @@
 const video = document.getElementById('video');
 const statusEl = document.getElementById('status');
 const debugEl = document.getElementById('debugOverlay');
+const debugPrevBtn = document.getElementById('debugPrev');
+const debugNextBtn = document.getElementById('debugNext');
+const debugAutoBtn = document.getElementById('debugAuto');
+const debugPageLabel = document.getElementById('debugPageLabel');
 
 let player = null;
 let lastObjectUrl = null;
@@ -12,6 +16,102 @@ let recentLines = [];
 let lastVideoSnapshot = null;
 let lastTracks = null;
 let lastManifestInfo = null;
+let debugTextCache = '';
+let debugPage = 0;
+let debugAutoScroll = true;
+let debugAutoTimer = null;
+
+
+function updateDebugPageLabel() {
+  if (!debugEl || !debugPageLabel) return;
+  const totalPages = Math.max(1, Math.ceil(debugEl.scrollHeight / Math.max(1, debugEl.clientHeight)));
+  const currentPage = Math.min(totalPages, Math.floor(debugEl.scrollTop / Math.max(1, debugEl.clientHeight)) + 1);
+  debugPageLabel.textContent = `Page ${currentPage}/${totalPages} · top ${Math.round(debugEl.scrollTop)} / ${Math.max(0, debugEl.scrollHeight - debugEl.clientHeight)}`;
+  if (debugAutoBtn) debugAutoBtn.textContent = debugAutoScroll ? 'Auto: ON' : 'Auto: OFF';
+}
+
+function scrollDebugToPage(page) {
+  if (!debugEl) return;
+  const pageHeight = Math.max(1, debugEl.clientHeight - 10);
+  const totalPages = Math.max(1, Math.ceil(debugEl.scrollHeight / pageHeight));
+  debugPage = Math.max(0, Math.min(totalPages - 1, page));
+  debugEl.scrollTop = debugPage * pageHeight;
+  updateDebugPageLabel();
+}
+
+function scrollDebugByPages(delta) {
+  debugAutoScroll = false;
+  scrollDebugToPage(debugPage + delta);
+}
+
+function refreshDebugOverlay(text, preservePage = false) {
+  if (!debugEnabled || !debugEl) return;
+  const oldTop = debugEl.scrollTop;
+  debugTextCache = text;
+  debugEl.textContent = text;
+  if (debugAutoScroll) {
+    // Jump to bottom so the newest error/recent events are visible on TV.
+    debugEl.scrollTop = debugEl.scrollHeight;
+    const pageHeight = Math.max(1, debugEl.clientHeight - 10);
+    debugPage = Math.max(0, Math.floor(debugEl.scrollTop / pageHeight));
+  } else if (preservePage) {
+    debugEl.scrollTop = oldTop;
+    const pageHeight = Math.max(1, debugEl.clientHeight - 10);
+    debugPage = Math.max(0, Math.floor(debugEl.scrollTop / pageHeight));
+  } else {
+    scrollDebugToPage(debugPage);
+  }
+  updateDebugPageLabel();
+}
+
+function startDebugAutoPager() {
+  if (debugAutoTimer) return;
+  debugAutoTimer = setInterval(() => {
+    if (!debugEnabled || !debugEl || !debugAutoScroll) return;
+    // Keep the newest lines visible; useful when the TV cannot scroll.
+    debugEl.scrollTop = debugEl.scrollHeight;
+    const pageHeight = Math.max(1, debugEl.clientHeight - 10);
+    debugPage = Math.max(0, Math.floor(debugEl.scrollTop / pageHeight));
+    updateDebugPageLabel();
+  }, 1200);
+}
+
+function setupDebugControls() {
+  if (!debugEl) return;
+  debugPrevBtn && debugPrevBtn.addEventListener('click', () => scrollDebugByPages(-1));
+  debugNextBtn && debugNextBtn.addEventListener('click', () => scrollDebugByPages(1));
+  debugAutoBtn && debugAutoBtn.addEventListener('click', () => {
+    debugAutoScroll = !debugAutoScroll;
+    if (debugAutoScroll) {
+      debugEl.scrollTop = debugEl.scrollHeight;
+      const pageHeight = Math.max(1, debugEl.clientHeight - 10);
+      debugPage = Math.max(0, Math.floor(debugEl.scrollTop / pageHeight));
+    }
+    updateDebugPageLabel();
+  });
+  debugEl.addEventListener('scroll', () => {
+    const pageHeight = Math.max(1, debugEl.clientHeight - 10);
+    debugPage = Math.max(0, Math.floor(debugEl.scrollTop / pageHeight));
+    updateDebugPageLabel();
+  });
+  window.addEventListener('keydown', ev => {
+    if (!debugEnabled) return;
+    const key = ev.key;
+    if (key === 'ArrowDown' || key === 'PageDown' || key === 'MediaTrackNext') { ev.preventDefault(); scrollDebugByPages(1); }
+    else if (key === 'ArrowUp' || key === 'PageUp' || key === 'MediaTrackPrevious') { ev.preventDefault(); scrollDebugByPages(-1); }
+    else if (key === 'ArrowRight') { ev.preventDefault(); scrollDebugByPages(1); }
+    else if (key === 'ArrowLeft') { ev.preventDefault(); scrollDebugByPages(-1); }
+    else if (key === 'Enter' || key === ' ') {
+      ev.preventDefault();
+      debugAutoScroll = !debugAutoScroll;
+      if (debugAutoScroll) debugEl.scrollTop = debugEl.scrollHeight;
+      updateDebugPageLabel();
+    }
+    else if (key === 'Home') { ev.preventDefault(); debugAutoScroll = false; scrollDebugToPage(0); }
+    else if (key === 'End') { ev.preventDefault(); debugAutoScroll = true; debugEl.scrollTop = debugEl.scrollHeight; updateDebugPageLabel(); }
+  });
+  startDebugAutoPager();
+}
 
 function enumName(obj, value) {
   if (!obj) return String(value);
@@ -181,7 +281,7 @@ function debugLine(...args) {
   recentLines.push(line);
   if (recentLines.length > 80) recentLines = recentLines.slice(-80);
   if (debugEnabled && debugEl) {
-    debugEl.textContent = buildDebugText();
+    refreshDebugOverlay(buildDebugText(), true);
   }
   console.log('[GenericShakaReceiver]', ...args);
 }
@@ -192,6 +292,7 @@ function buildDebugText(extra = '') {
     '=================================',
     `time: ${new Date().toISOString()}`,
     `status: ${statusEl ? statusEl.textContent : ''}`,
+    `debugAutoScroll: ${debugAutoScroll} · use arrows/PageUp/PageDown/Enter if available`,
     '',
     'LAST LOAD:',
     safeJson(lastLoad, 2500),
@@ -227,7 +328,7 @@ function showError(title, error) {
     '-----',
     safeJson(detail, 9000)
   ].join('\n');
-  if (debugEl) debugEl.textContent = buildDebugText(text);
+  if (debugEl) refreshDebugOverlay(buildDebugText(text), false);
   console.error('[GenericShakaReceiver]', title, detail);
 }
 
@@ -521,6 +622,7 @@ async function loadContent(mediaInfo) {
 }
 
 async function main() {
+  setupDebugControls();
   window.addEventListener('error', e => showError('WINDOW ERROR', {message:e.message, filename:e.filename, lineno:e.lineno, colno:e.colno, error:e.error}));
   window.addEventListener('unhandledrejection', e => showError('UNHANDLED REJECTION', e.reason));
   shaka.polyfill.installAll();
