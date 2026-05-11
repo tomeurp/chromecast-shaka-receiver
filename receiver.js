@@ -22,7 +22,7 @@ let lastTracks = null;
 let lastManifestInfo = null;
 let debugTextCache = '';
 let debugPage = 0;
-let debugAutoScroll = true;
+let debugAutoScroll = false;
 let debugAutoTimer = null;
 
 
@@ -197,11 +197,13 @@ function setupDebugControls() {
     else if (key === 'ArrowUp' || key === 'PageUp' || key === 'MediaTrackPrevious') { ev.preventDefault(); scrollDebugByPages(-1); }
     else if (key === 'ArrowRight') { ev.preventDefault(); scrollDebugByPages(1); }
     else if (key === 'ArrowLeft') { ev.preventDefault(); scrollDebugByPages(-1); }
-    else if (key === 'Enter' || key === ' ') {
+    else if (key === 'Enter' || key === 'OK' || key === 'Accept') {
       ev.preventDefault();
-      debugAutoScroll = !debugAutoScroll;
-      if (debugAutoScroll) debugEl.scrollTop = debugEl.scrollHeight;
-      updateDebugPageLabel();
+      showDebugQr();
+    }
+    else if (key === ' ') {
+      ev.preventDefault();
+      showDebugQr();
     }
     else if (key === 'Home') { ev.preventDefault(); debugAutoScroll = false; scrollDebugToPage(0); }
     else if (key === 'End') { ev.preventDefault(); debugAutoScroll = true; debugEl.scrollTop = debugEl.scrollHeight; updateDebugPageLabel(); }
@@ -388,7 +390,7 @@ function buildDebugText(extra = '') {
     '=================================',
     `time: ${new Date().toISOString()}`,
     `status: ${statusEl ? statusEl.textContent : ''}`,
-    `debugAutoScroll: ${debugAutoScroll} · use arrows/PageUp/PageDown/Enter; Q = QR log`,
+    `debugAutoScroll: ${debugAutoScroll} · use arrows/PageUp/PageDown; OK/Enter/Q = QR log`,
     '',
     'LAST LOAD:',
     safeJson(lastLoad, 2500),
