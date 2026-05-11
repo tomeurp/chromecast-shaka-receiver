@@ -40,7 +40,7 @@ function makeDebugPayloadForExport() {
   const fullText = debugTextCache || buildDebugText();
   const payload = {
     type: 'generic-shaka-receiver-debug',
-    version: 6,
+    version: 71,
     generatedAt: new Date().toISOString(),
     userAgent: navigator.userAgent,
     location: location.href,
@@ -82,18 +82,18 @@ async function showDebugQr() {
   const payload = makeDebugPayloadForExport();
   const encoded = base64UrlEncodeUtf8(payload);
   const dataUrl = `data:application/json;base64,${encoded}`;
-  const compact = `DBG6:${encoded}`;
+  const compact = `DBG71:${encoded}`;
 
   qrPanel.classList.add('visible');
 
   // QR practical limit: keep it short. If too long, encode the tail plus an instruction.
   let qrData = compact;
-  let label = `DBG6 base64url JSON chars=${encoded.length}`;
+  let label = `DBG71 base64url JSON chars=${encoded.length}`;
 
   if (compact.length > 1800) {
     const slimPayload = JSON.stringify({
       type: 'generic-shaka-receiver-debug-slim',
-      version: 6,
+      version: 71,
       generatedAt: new Date().toISOString(),
       status: statusEl ? statusEl.textContent : '',
       errorHint: recentLines.slice(-20).join('\n'),
@@ -103,8 +103,8 @@ async function showDebugQr() {
       manifestInfo: lastManifestInfo,
     }, null, 2);
     const slim = base64UrlEncodeUtf8(slimPayload);
-    qrData = `DBG6:${slim}`;
-    label = `DBG6 slim base64url JSON chars=${slim.length}; full=${encoded.length}`;
+    qrData = `DBG71:${slim}`;
+    label = `DBG71 slim base64url JSON chars=${slim.length}; full=${encoded.length}`;
   }
 
   qrText.textContent = label + '\n' + qrData.slice(0, 240) + (qrData.length > 240 ? '…' : '');
@@ -743,6 +743,34 @@ async function main() {
 
   const context = cast.framework.CastReceiverContext.getInstance();
   const playerManager = context.getPlayerManager();
+
+  // v7.1 safe remote debug controls.
+  // Do not capture TV remote keys globally; instead let the sender request QR/debug actions.
+  try {
+    context.addCustomMessageListener('urn:x-cast:debug', event => {
+      try {
+        const data = event && event.data ? event.data : {};
+        debugLine('DEBUG MESSAGE', data);
+        if (data.action === 'enableDebug') enableDebug('remote message');
+        if (data.action === 'showQr') {
+          enableDebug('remote showQr');
+          showDebugQr();
+        }
+        if (data.action === 'hideQr' && qrPanel) qrPanel.classList.remove('visible');
+        if (data.action === 'nextPage') scrollDebugByPages(1);
+        if (data.action === 'prevPage') scrollDebugByPages(-1);
+        if (data.action === 'auto') {
+          debugAutoScroll = !debugAutoScroll;
+          updateDebugPageLabel();
+        }
+      } catch (e) {
+        console.error('[GenericShakaReceiver] debug message failed', e);
+      }
+    });
+  } catch (e) {
+    console.warn('[GenericShakaReceiver] addCustomMessageListener failed', e);
+  }
+
 
   playerManager.addEventListener(cast.framework.events.EventType.ERROR, event => {
     showError('CAF ERROR EVENT', event);

@@ -42,3 +42,18 @@ The receiver shows:
 - press `Esc` to hide the QR panel
 
 The QR encodes a compact base64url JSON payload prefixed with `DBG6:`. If the full log is too long for a practical QR, the receiver automatically emits a slim debug payload with the latest error, request/response, video snapshot and manifest info.
+
+
+## v7.1 safe debug remote control
+
+This build reverts the remote key capture from v7. It should not enable debug before content is loaded unless `?debug=1` is used or the sender sends `customData.debug = true`.
+
+Use sender-side custom messages instead:
+
+```js
+const session = cast.framework.CastContext.getInstance().getCurrentSession();
+session.sendMessage('urn:x-cast:debug', { action: 'enableDebug' });
+session.sendMessage('urn:x-cast:debug', { action: 'showQr' });
+session.sendMessage('urn:x-cast:debug', { action: 'nextPage' });
+session.sendMessage('urn:x-cast:debug', { action: 'prevPage' });
+```
