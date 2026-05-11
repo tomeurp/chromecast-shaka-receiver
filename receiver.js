@@ -1,56 +1,43 @@
-const context = cast.framework.CastReceiverContext.getInstance();
-const playerManager = context.getPlayerManager();
+const video = document.getElementById('video');
+const player = new shaka.Player(video);
 
-// --- 1. FILTRO DE RED (Tokens y Evasión de Bloqueos) ---
-playerManager.getNetworkingEngine().registerRequestFilter((type, request) => {
-    // Inyectamos el token en todas las peticiones (manifiesto y segmentos)
-    const token = "include_tudum=true";
-    const separator = request.uris[0].includes('?') ? '&' : '?';
-    request.uris[0] += separator + token;
-    
-    // Forzamos el Origin para que el CDN de Makusi no nos rechace
-    request.headers['Origin'] = 'https://makusi.eus';
-});
+async function initReceiver() {
+    // Escuchar mensajes del Sender para recibir la URL y las llaves
+    const castContext = cast.framework.CastReceiverContext.getInstance();
+    const playerManager = castContext.getPlayerManager();
 
-// --- 2. MANEJO DE CLEARKEY (Simulación de Licencia Local) ---
-playerManager.setMediaPlaybackInfoHandler((loadRequestData, playbackConfig) => {
-    const customData = loadRequestData.media.customData || {};
-    
-    if (customData.drm && customData.drm.clearKeys) {
-        // Indicamos que use el sistema de protección ClearKey
-        playbackConfig.protectionSystem = cast.framework.ContentProtection.CLEARKEY;
+    player.getNetworkingEngine().registerRequestFilter((type, request) => {
+        // Inyectar Token include_tudum
+        const sep = request.uris[0].includes('?') ? '&' : '?';
+        request.uris[0] += sep + 'include_tudum=true';
+        request.headers['Origin'] = 'https://makusi.eus';
+    });
+
+    player.getNetworkingEngine().registerResponseFilter((type, response) => {
+        if (type === shaka.net.NetworkingEngine.RequestType.MANIFEST) {
+            let xml = new TextDecoder().decode(response.data);
+            // Limpiar Widevine para forzar ClearKey
+            xml = xml.replace(/<ContentProtection [^>]*schemeIdUri="urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"[^>]*>[\s\S]*?<\/ContentProtection>/gi, '');
+            response.data = new TextEncoder().encode(xml);
+        }
+    });
+
+    // Escuchamos el evento de carga del móvil/PC
+    playerManager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, loadRequestData => {
+        const drm = loadRequestData.media.customData.drm;
         
-        // Esta función responde a la petición de llave sin salir a internet
-        playbackConfig.licenseRequestHandler = (requestInfo) => {
-            const keys = customData.drm.clearKeys;
-            const kid = Object.keys(keys)[0];
-            const key = keys[kid];
+        player.configure({
+            drm: { clearKeys: drm.clearKeys }
+        });
 
-            // Formato JWK (JSON Web Key) que el reproductor entiende
-            const jwk = {
-                keys: [{
-                    kty: 'oct',
-                    kid: hexToBase64Url(kid),
-                    k: hexToBase64Url(key)
-                }]
-            };
-            
-            // Inyectamos la llave directamente en la respuesta
-            requestInfo.content = new TextEncoder().encode(JSON.stringify(jwk));
-        };
-    }
-    return playbackConfig;
-});
+        player.load(loadRequestData.media.contentId);
+        return null; // Anulamos la carga por defecto de CAF para que Shaka tome el control
+    });
 
-// Utilidad para convertir Hexadecimal a Base64URL (estándar EME)
-function hexToBase64Url(hex) {
-    const cleanHex = hex.replace(/-/g, '');
-    const binary = hex.match(/\w{2}/g).map(a => String.fromCharCode(parseInt(a, 16))).join("");
-    return btoa(binary)
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=/g, "");
+    castContext.start();
 }
 
-// Iniciar el receptor
-context.start();
+// Cargar la librería de Cast y arrancar
+if (window.cast) {
+    initReceiver();
+}
