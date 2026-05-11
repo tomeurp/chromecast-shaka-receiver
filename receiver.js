@@ -57,9 +57,6 @@ function makeDebugPayloadForExport() {
   return JSON.stringify(payload, null, 2);
 }
 
-// Minimal QR generator would be too heavy for all payload sizes.
-// Use qrserver public image API for compact payloads; for large logs show a data URL text payload.
-// Chromecast only needs to display it. No receiver data is sent to our app.
 function renderQrToCanvasFromImageUrl(url) {
   return new Promise((resolve, reject) => {
     const ctx = qrCanvas.getContext('2d');
@@ -86,7 +83,6 @@ async function showDebugQr() {
 
   qrPanel.classList.add('visible');
 
-  // QR practical limit: keep it short. If too long, encode the tail plus an instruction.
   let qrData = compact;
   let label = `DBG72 base64url JSON chars=${encoded.length}`;
 
@@ -155,7 +151,6 @@ function refreshDebugOverlay(text, preservePage = false) {
   debugTextCache = text;
   debugEl.textContent = text;
   if (debugAutoScroll) {
-    // Jump to bottom so the newest error/recent events are visible on TV.
     debugEl.scrollTop = debugEl.scrollHeight;
     const pageHeight = Math.max(1, debugEl.clientHeight - 10);
     debugPage = Math.max(0, Math.floor(debugEl.scrollTop / pageHeight));
@@ -173,7 +168,6 @@ function startDebugAutoPager() {
   if (debugAutoTimer) return;
   debugAutoTimer = setInterval(() => {
     if (!debugEnabled || !debugEl || !debugAutoScroll) return;
-    // Keep the newest lines visible; useful when the TV cannot scroll.
     debugEl.scrollTop = debugEl.scrollHeight;
     const pageHeight = Math.max(1, debugEl.clientHeight - 10);
     debugPage = Math.max(0, Math.floor(debugEl.scrollTop / pageHeight));
@@ -560,12 +554,13 @@ function dirnameUrl(url) {
   }
 }
 
-function hasMpdBaseUrl(xml) {
-  return /<BaseURL[\s>]/i.test(xml);
+// FIX: Solo detecta BaseURL si es hija directa de MPD o Period (global)
+function hasGlobalBaseUrl(xml) {
+  return /<(MPD|Period)[^>]*>\s*<BaseURL/i.test(xml);
 }
 
 function injectBaseUrl(xml, baseUrl) {
-  if (!baseUrl || hasMpdBaseUrl(xml)) {
+  if (!baseUrl || hasGlobalBaseUrl(xml)) {
     return xml;
   }
   return xml.replace(/(<MPD\b[^>]*>)/i, `$1\n  <BaseURL>${baseUrl}</BaseURL>`);
@@ -744,8 +739,6 @@ async function main() {
   const context = cast.framework.CastReceiverContext.getInstance();
   const playerManager = context.getPlayerManager();
 
-  // v7.1 safe remote debug controls.
-  // Do not capture TV remote keys globally; instead let the sender request QR/debug actions.
   try {
     context.addCustomMessageListener('urn:x-cast:debug', event => {
       try {
