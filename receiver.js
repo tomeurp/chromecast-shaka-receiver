@@ -40,7 +40,7 @@ function makeDebugPayloadForExport() {
   const fullText = debugTextCache || buildDebugText();
   const payload = {
     type: 'generic-shaka-receiver-debug',
-    version: 7,
+    version: 6,
     generatedAt: new Date().toISOString(),
     userAgent: navigator.userAgent,
     location: location.href,
@@ -82,18 +82,18 @@ async function showDebugQr() {
   const payload = makeDebugPayloadForExport();
   const encoded = base64UrlEncodeUtf8(payload);
   const dataUrl = `data:application/json;base64,${encoded}`;
-  const compact = `DBG7:${encoded}`;
+  const compact = `DBG6:${encoded}`;
 
   qrPanel.classList.add('visible');
 
   // QR practical limit: keep it short. If too long, encode the tail plus an instruction.
   let qrData = compact;
-  let label = `DBG7 base64url JSON chars=${encoded.length}`;
+  let label = `DBG6 base64url JSON chars=${encoded.length}`;
 
   if (compact.length > 1800) {
     const slimPayload = JSON.stringify({
       type: 'generic-shaka-receiver-debug-slim',
-      version: 7,
+      version: 6,
       generatedAt: new Date().toISOString(),
       status: statusEl ? statusEl.textContent : '',
       errorHint: recentLines.slice(-20).join('\n'),
@@ -103,8 +103,8 @@ async function showDebugQr() {
       manifestInfo: lastManifestInfo,
     }, null, 2);
     const slim = base64UrlEncodeUtf8(slimPayload);
-    qrData = `DBG7:${slim}`;
-    label = `DBG7 slim base64url JSON chars=${slim.length}; full=${encoded.length}`;
+    qrData = `DBG6:${slim}`;
+    label = `DBG6 slim base64url JSON chars=${slim.length}; full=${encoded.length}`;
   }
 
   qrText.textContent = label + '\n' + qrData.slice(0, 240) + (qrData.length > 240 ? '…' : '');
@@ -183,7 +183,6 @@ function startDebugAutoPager() {
 
 function setupDebugControls() {
   if (!debugEl) return;
-
   debugPrevBtn && debugPrevBtn.addEventListener('click', () => scrollDebugByPages(-1));
   debugNextBtn && debugNextBtn.addEventListener('click', () => scrollDebugByPages(1));
   debugQrBtn && debugQrBtn.addEventListener('click', () => showDebugQr());
@@ -196,112 +195,30 @@ function setupDebugControls() {
     }
     updateDebugPageLabel();
   });
-
-  debugButtons = getDebugButtons();
-  updateDebugToolbarFocus();
-
   debugEl.addEventListener('scroll', () => {
     const pageHeight = Math.max(1, debugEl.clientHeight - 10);
     debugPage = Math.max(0, Math.floor(debugEl.scrollTop / pageHeight));
     updateDebugPageLabel();
   });
-
   window.addEventListener('keydown', ev => {
     if (!debugEnabled) return;
-
     const key = ev.key;
-    const code = ev.code || '';
-
-    // Teclado/diagnóstico.
-    if (key === 'q' || key === 'Q') {
+    if (key === 'q' || key === 'Q') { ev.preventDefault(); showDebugQr(); return; }
+    if (key === 'Escape' && qrPanel && qrPanel.classList.contains('visible')) { ev.preventDefault(); qrPanel.classList.remove('visible'); return; }
+    if (key === 'ArrowDown' || key === 'PageDown' || key === 'MediaTrackNext') { ev.preventDefault(); scrollDebugByPages(1); }
+    else if (key === 'ArrowUp' || key === 'PageUp' || key === 'MediaTrackPrevious') { ev.preventDefault(); scrollDebugByPages(-1); }
+    else if (key === 'ArrowRight') { ev.preventDefault(); scrollDebugByPages(1); }
+    else if (key === 'ArrowLeft') { ev.preventDefault(); scrollDebugByPages(-1); }
+    else if (key === 'Enter' || key === ' ') {
       ev.preventDefault();
-      showDebugQr();
-      return;
-    }
-
-    if (key === 'Escape' && qrPanel && qrPanel.classList.contains('visible')) {
-      ev.preventDefault();
-      qrPanel.classList.remove('visible');
-      return;
-    }
-
-    // Mando: izquierda/derecha selecciona botón.
-    if (
-      key === 'ArrowLeft' ||
-      key === 'Left' ||
-      code === 'ArrowLeft' ||
-      code === 'MediaTrackPrevious'
-    ) {
-      ev.preventDefault();
-      moveDebugToolbarFocus(-1);
-      return;
-    }
-
-    if (
-      key === 'ArrowRight' ||
-      key === 'Right' ||
-      code === 'ArrowRight' ||
-      code === 'MediaTrackNext'
-    ) {
-      ev.preventDefault();
-      moveDebugToolbarFocus(1);
-      return;
-    }
-
-    // Mando: OK/Enter activa botón seleccionado.
-    if (
-      key === 'Enter' ||
-      key === 'OK' ||
-      key === 'Accept' ||
-      key === 'Select' ||
-      key === ' ' ||
-      code === 'Enter' ||
-      code === 'NumpadEnter'
-    ) {
-      ev.preventDefault();
-      activateDebugToolbarFocus();
-      return;
-    }
-
-    // Arriba/abajo: scroll del log.
-    if (
-      key === 'ArrowDown' ||
-      key === 'Down' ||
-      key === 'PageDown' ||
-      code === 'ArrowDown'
-    ) {
-      ev.preventDefault();
-      scrollDebugByPages(1);
-      return;
-    }
-
-    if (
-      key === 'ArrowUp' ||
-      key === 'Up' ||
-      key === 'PageUp' ||
-      code === 'ArrowUp'
-    ) {
-      ev.preventDefault();
-      scrollDebugByPages(-1);
-      return;
-    }
-
-    if (key === 'Home') {
-      ev.preventDefault();
-      debugEl.scrollTop = 0;
+      debugAutoScroll = !debugAutoScroll;
+      if (debugAutoScroll) debugEl.scrollTop = debugEl.scrollHeight;
       updateDebugPageLabel();
-      return;
     }
-
-    if (key === 'End') {
-      ev.preventDefault();
-      debugEl.scrollTop = debugEl.scrollHeight;
-      updateDebugPageLabel();
-      return;
-    }
+    else if (key === 'Home') { ev.preventDefault(); debugAutoScroll = false; scrollDebugToPage(0); }
+    else if (key === 'End') { ev.preventDefault(); debugAutoScroll = true; debugEl.scrollTop = debugEl.scrollHeight; updateDebugPageLabel(); }
   });
-
-  updateDebugPageLabel();
+  startDebugAutoPager();
 }
 
 function enumName(obj, value) {
@@ -483,7 +400,7 @@ function buildDebugText(extra = '') {
     '=================================',
     `time: ${new Date().toISOString()}`,
     `status: ${statusEl ? statusEl.textContent : ''}`,
-    `debugAutoScroll: ${debugAutoScroll} · use arrows/PageUp/PageDown/Enter; ←/→ focus buttons · OK activates · Q = QR log`,
+    `debugAutoScroll: ${debugAutoScroll} · use arrows/PageUp/PageDown/Enter; Q = QR log`,
     '',
     'LAST LOAD:',
     safeJson(lastLoad, 2500),
