@@ -68,3 +68,8 @@ session.sendMessage('urn:x-cast:debug', JSON.stringify({ action: 'showQr' }));
 ```
 
 The receiver now accepts both JSON strings and plain action strings.
+
+
+## v7.3 QR image fix
+
+QR rendering now uses a plain `<img>` instead of drawing an external image into a canvas. This avoids CORS/canvas-taint failures on Chromecast receivers.
