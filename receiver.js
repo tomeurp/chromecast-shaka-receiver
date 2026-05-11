@@ -9,12 +9,143 @@ let lastLoad = null;
 let lastRequest = null;
 let lastResponse = null;
 let recentLines = [];
+let lastVideoSnapshot = null;
+let lastTracks = null;
+let lastManifestInfo = null;
+
+function enumName(obj, value) {
+  if (!obj) return String(value);
+  for (const k of Object.keys(obj)) {
+    if (obj[k] === value) return k;
+  }
+  return String(value);
+}
+
+function mediaErrorDetails(err) {
+  if (!err) return null;
+  return {
+    code: err.code,
+    codeName: ({1:'MEDIA_ERR_ABORTED',2:'MEDIA_ERR_NETWORK',3:'MEDIA_ERR_DECODE',4:'MEDIA_ERR_SRC_NOT_SUPPORTED'})[err.code] || String(err.code),
+    message: err.message || '',
+    msExtendedCode: err.msExtendedCode || null
+  };
+}
+
+function videoSnapshot(label = '') {
+  if (!video) return null;
+  const snap = {
+    label,
+    currentTime: video.currentTime,
+    duration: video.duration,
+    paused: video.paused,
+    ended: video.ended,
+    muted: video.muted,
+    volume: video.volume,
+    networkState: video.networkState,
+    readyState: video.readyState,
+    currentSrc: video.currentSrc,
+    error: mediaErrorDetails(video.error),
+    buffered: []
+  };
+  try {
+    for (let i = 0; i < video.buffered.length; i++) {
+      snap.buffered.push([video.buffered.start(i), video.buffered.end(i)]);
+    }
+  } catch (e) {}
+  lastVideoSnapshot = snap;
+  return snap;
+}
+
+function describeShakaError(error) {
+  if (!error) return null;
+  const E = window.shaka && shaka.util && shaka.util.Error;
+  const out = {
+    name: error.name || null,
+    message: error.message || String(error),
+    severity: error.severity,
+    severityName: E ? enumName(E.Severity, error.severity) : null,
+    category: error.category,
+    categoryName: E ? enumName(E.Category, error.category) : null,
+    code: error.code,
+    codeName: E ? enumName(E.Code, error.code) : null,
+    handled: error.handled,
+    stack: error.stack || null,
+    data: []
+  };
+  const data = Array.isArray(error.data) ? error.data : [];
+  out.data = data.map((d, i) => describeErrorDatum(d, i));
+  return out;
+}
+
+function describeErrorDatum(d, i) {
+  if (d instanceof Error) {
+    return {index:i, type:'Error', name:d.name, message:d.message, stack:d.stack, code:d.code};
+  }
+  if (typeof MediaError !== 'undefined' && d instanceof MediaError) {
+    return {index:i, type:'MediaError', ...mediaErrorDetails(d)};
+  }
+  if (d && typeof d === 'object') {
+    const copy = {index:i, type:d.constructor && d.constructor.name || 'Object'};
+    for (const k of Object.keys(d)) {
+      const v = d[k];
+      if (v instanceof Error) copy[k] = {name:v.name, message:v.message, stack:v.stack, code:v.code};
+      else if (typeof MediaError !== 'undefined' && v instanceof MediaError) copy[k] = mediaErrorDetails(v);
+      else copy[k] = v;
+    }
+    if (Object.keys(copy).length <= 2) copy.string = String(d);
+    return copy;
+  }
+  return {index:i, type:typeof d, value:d};
+}
+
+function parseManifestInfo(xml) {
+  try {
+    const doc = new DOMParser().parseFromString(xml, 'application/xml');
+    const codecs = [...doc.querySelectorAll('Representation[codecs], AdaptationSet[codecs]')]
+      .map(el => el.getAttribute('codecs')).filter(Boolean);
+    const mimeTypes = [...doc.querySelectorAll('Representation[mimeType], AdaptationSet[mimeType]')]
+      .map(el => el.getAttribute('mimeType')).filter(Boolean);
+    const kids = [...xml.matchAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32}/gi)]
+      .map(m => m[0]).slice(0, 30);
+    const tests = [];
+    const uniqueCodecs = [...new Set(codecs)];
+    const uniqueMimes = [...new Set(mimeTypes)];
+    for (const mt of uniqueMimes.length ? uniqueMimes : ['video/mp4','audio/mp4']) {
+      for (const c of uniqueCodecs.length ? uniqueCodecs : ['']) {
+        const type = c ? `${mt}; codecs=\"${c}\"` : mt;
+        tests.push({type, canPlayType: video && video.canPlayType ? video.canPlayType(type) : null});
+      }
+    }
+    return {
+      mpdType: doc.querySelector('MPD')?.getAttribute('type') || null,
+      profiles: doc.querySelector('MPD')?.getAttribute('profiles') || null,
+      baseUrls: [...doc.querySelectorAll('BaseURL')].map(e => (e.textContent || '').trim()).slice(0, 20),
+      codecs: uniqueCodecs.slice(0, 30),
+      mimeTypes: uniqueMimes.slice(0, 20),
+      kids,
+      canPlayType: tests.slice(0, 50),
+      segmentTemplates: [...doc.querySelectorAll('SegmentTemplate')].map(e => ({
+        initialization:e.getAttribute('initialization'),
+        media:e.getAttribute('media'),
+        timescale:e.getAttribute('timescale'),
+        duration:e.getAttribute('duration'),
+        startNumber:e.getAttribute('startNumber')
+      })).slice(0, 15),
+      segmentUrls: [...doc.querySelectorAll('SegmentURL')].map(e => ({media:e.getAttribute('media'), index:e.getAttribute('index')})).slice(0, 15)
+    };
+  } catch (e) {
+    return {parseError: e.message};
+  }
+}
+
 
 function safeJson(value, max = 7000) {
   try {
     const seen = new WeakSet();
     const text = JSON.stringify(value, (key, val) => {
       if (typeof val === 'function') return '[Function]';
+      if (typeof MediaError !== 'undefined' && val instanceof MediaError) return mediaErrorDetails(val);
+      if (val && val.code && val.category && val.severity && Array.isArray(val.data)) return describeShakaError(val);
       if (val instanceof Error) {
         return {
           name: val.name,
@@ -70,6 +201,15 @@ function buildDebugText(extra = '') {
     '',
     'LAST RESPONSE:',
     safeJson(lastResponse, 2500),
+    '',
+    'VIDEO SNAPSHOT:',
+    safeJson(lastVideoSnapshot || videoSnapshot('debug'), 2500),
+    '',
+    'TRACKS:',
+    safeJson(lastTracks, 2500),
+    '',
+    'MANIFEST INFO:',
+    safeJson(lastManifestInfo, 3500),
     extra ? '\nEXTRA:\n' + extra : '',
     '',
     'RECENT:',
@@ -79,7 +219,9 @@ function buildDebugText(extra = '') {
 
 function showError(title, error) {
   enableDebug('error');
-  const detail = error && error.detail ? error.detail : error;
+  const rawDetail = error && error.detail ? error.detail : error;
+  const detail = rawDetail && rawDetail.code && rawDetail.category && rawDetail.severity ? describeShakaError(rawDetail) : rawDetail;
+  videoSnapshot(title);
   const text = [
     title,
     '-----',
@@ -245,6 +387,7 @@ function createManifestObjectUrl(mediaInfo, customData) {
 
   const baseUrl = customData.manifestBaseUrl || dirnameUrl(originalUrl);
   xml = injectBaseUrl(xml, baseUrl);
+  lastManifestInfo = parseManifestInfo(xml);
 
   const blob = new Blob([xml], { type: 'application/dash+xml' });
   lastObjectUrl = URL.createObjectURL(blob);
@@ -269,9 +412,24 @@ async function initPlayer() {
 
   player.addEventListener('error', event => {
     const err = event.detail;
-    setStatus(`Shaka error: ${err && err.code}`);
+    setStatus(`Shaka error: ${err && err.code} ${describeShakaError(err)?.codeName || ''}`);
     showError('SHAKA PLAYER ERROR', err);
   });
+
+  player.addEventListener('adaptation', () => {
+    try { lastTracks = {variantTracks: player.getVariantTracks(), textTracks: player.getTextTracks()}; }
+    catch (e) { lastTracks = {error:e.message}; }
+    debugLine('SHAKA EVENT adaptation', lastTracks);
+  });
+
+  player.addEventListener('trackschanged', () => {
+    try { lastTracks = {variantTracks: player.getVariantTracks(), textTracks: player.getTextTracks()}; }
+    catch (e) { lastTracks = {error:e.message}; }
+    debugLine('SHAKA EVENT trackschanged', lastTracks);
+  });
+
+  player.addEventListener('drmsessionupdate', event => debugLine('SHAKA EVENT drmsessionupdate', event));
+  player.addEventListener('expirationupdated', event => debugLine('SHAKA EVENT expirationupdated', event));
 
   video.addEventListener('error', () => {
     showError('VIDEO ELEMENT ERROR', {
@@ -283,10 +441,9 @@ async function initPlayer() {
     });
   });
 
-  video.addEventListener('playing', () => debugLine('VIDEO EVENT playing'));
-  video.addEventListener('waiting', () => debugLine('VIDEO EVENT waiting'));
-  video.addEventListener('stalled', () => debugLine('VIDEO EVENT stalled'));
-  video.addEventListener('canplay', () => debugLine('VIDEO EVENT canplay'));
+  ['loadstart','loadedmetadata','loadeddata','canplay','canplaythrough','playing','pause','waiting','stalled','suspend','emptied','abort','ended','encrypted'].forEach(name => {
+    video.addEventListener(name, ev => debugLine('VIDEO EVENT ' + name, videoSnapshot(name)));
+  });
 
   return player;
 }
@@ -321,6 +478,21 @@ async function loadContent(mediaInfo) {
   const shakaPlayer = await initPlayer();
   const config = buildShakaConfig(customData);
 
+  config.streaming = {
+    ...(config.streaming || {}),
+    failureCallback: error => {
+      debugLine('STREAMING failureCallback', describeShakaError(error));
+      showError('STREAMING FAILURE CALLBACK', error);
+    }
+  };
+  config.manifest = {
+    ...(config.manifest || {}),
+    dash: {
+      ...((config.manifest && config.manifest.dash) || {}),
+      ignoreMinBufferTime: true
+    }
+  };
+
   shakaPlayer.configure(config);
 
   const combinedHeaders = {
@@ -337,16 +509,22 @@ async function loadContent(mediaInfo) {
   try {
     await shakaPlayer.load(contentUrl);
   } catch (e) {
-    setStatus(`LOAD failed: Shaka Error ${e && e.code ? e.code : e.message}`);
+    const described = describeShakaError(e);
+    setStatus(`LOAD failed: Shaka Error ${e && e.code ? e.code : e.message} ${described?.codeName || ''}`);
     showError('SHAKA LOAD THROW', e);
     throw e;
   }
 
+  try { lastTracks = {variantTracks: shakaPlayer.getVariantTracks(), textTracks: shakaPlayer.getTextTracks(), stats: shakaPlayer.getStats()}; } catch(e) {}
+  videoSnapshot('after-load');
   setStatus('Playing');
 }
 
 async function main() {
+  window.addEventListener('error', e => showError('WINDOW ERROR', {message:e.message, filename:e.filename, lineno:e.lineno, colno:e.colno, error:e.error}));
+  window.addEventListener('unhandledrejection', e => showError('UNHANDLED REJECTION', e.reason));
   shaka.polyfill.installAll();
+  if (shaka.log && shaka.log.setLevel) { try { shaka.log.setLevel(shaka.log.Level.DEBUG); } catch(e) {} }
 
   if (!shaka.Player.isBrowserSupported()) {
     setStatus('Shaka not supported');
