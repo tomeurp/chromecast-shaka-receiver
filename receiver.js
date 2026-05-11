@@ -1,13 +1,15 @@
-const video = document.getElementById('video');
-const player = new shaka.Player(video);
+const context = cast.framework.CastReceiverContext.getInstance();
+const videoElement = document.getElementById('shaka-video');
+const player = new shaka.Player(videoElement);
 
-// Configuración de red para Makusi
+// 1. Configuración de Red (Token y Origin)
 player.getNetworkingEngine().registerRequestFilter((type, request) => {
     const sep = request.uris[0].includes('?') ? '&' : '?';
     request.uris[0] += sep + 'include_tudum=true';
     request.headers['Origin'] = 'https://makusi.eus';
 });
 
+// 2. Limpieza de DRM en el Manifiesto
 player.getNetworkingEngine().registerResponseFilter((type, response) => {
     if (type === shaka.net.NetworkingEngine.RequestType.MANIFEST) {
         let xml = new TextDecoder().decode(response.data);
@@ -16,29 +18,22 @@ player.getNetworkingEngine().registerResponseFilter((type, response) => {
     }
 });
 
-// --- INICIALIZAR BUS DE DATOS DEL CHROMECAST ---
-const windowCast = window.cast || {};
-if (windowCast.receiver) {
-    const manager = windowCast.receiver.CastReceiverManager.getInstance();
-    const messageBus = manager.getCastMessageBus('urn:x-cast:com.google.cast.media');
+// 3. Interceptar el comando de carga del móvil/PC
+const playerManager = context.getPlayerManager();
+playerManager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, loadRequestData => {
+    const drm = loadRequestData.media.customData.drm;
+    const url = loadRequestData.media.contentId;
 
-    manager.onReady = () => console.log("📺 Receptor listo y esperando...");
+    player.configure({
+        drm: { clearKeys: drm.clearKeys }
+    });
 
-    messageBus.onMessage = (event) => {
-        const message = JSON.parse(event.data);
-        if (message.type === 'LOAD') {
-            const drm = message.media.customData.drm;
-            const url = message.media.contentId;
+    player.load(url).then(() => {
+        console.log("✅ One Piece cargado con Shaka");
+    }).catch(e => console.error("❌ Error Shaka:", e));
 
-            player.configure({
-                drm: { clearKeys: drm.clearKeys }
-            });
+    // Retornamos null para que el reproductor por defecto de Google no intente cargar nada
+    return null; 
+});
 
-            player.load(url).then(() => {
-                console.log("🎬 Reproduciendo One Piece");
-            }).catch(e => console.error("❌ Error carga:", e));
-        }
-    };
-
-    manager.start();
-}
+context.start();
