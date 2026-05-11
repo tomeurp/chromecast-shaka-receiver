@@ -2,6 +2,7 @@ const video = document.getElementById('video');
 const statusEl = document.getElementById('status');
 
 let player = null;
+let lastObjectUrl = null;
 
 function log(...args) {
   console.log('[GenericShakaReceiver]', ...args);
@@ -83,6 +84,80 @@ function applyRequestHeaders(shakaPlayer, headers = {}) {
   });
 }
 
+function decodeBase64Utf8(base64) {
+  const binary = atob(String(base64).trim());
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
+function dirnameUrl(url) {
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    u.search = '';
+    u.pathname = u.pathname.replace(/[^/]*$/, '');
+    return u.toString();
+  } catch (e) {
+    return null;
+  }
+}
+
+function hasMpdBaseUrl(xml) {
+  return /<BaseURL[\s>]/i.test(xml);
+}
+
+function injectBaseUrl(xml, baseUrl) {
+  if (!baseUrl || hasMpdBaseUrl(xml)) {
+    return xml;
+  }
+
+  // Insert a document-level BaseURL immediately after the opening MPD tag.
+  // This lets Blob-loaded MPDs keep resolving relative segment URLs against
+  // the original manifest location.
+  return xml.replace(/(<MPD\b[^>]*>)/i, `$1\n  <BaseURL>${baseUrl}</BaseURL>`);
+}
+
+function createManifestObjectUrl(mediaInfo, customData) {
+  const manifestText = customData.manifestText || customData.mpdText || null;
+  const manifestBase64 = customData.manifestBase64 || customData.mpdBase64 || null;
+
+  if (!manifestText && !manifestBase64) {
+    return null;
+  }
+
+  if (lastObjectUrl) {
+    URL.revokeObjectURL(lastObjectUrl);
+    lastObjectUrl = null;
+  }
+
+  let xml = manifestText || decodeBase64Utf8(manifestBase64);
+
+  const originalUrl =
+    customData.manifestUrl ||
+    customData.originalUrl ||
+    mediaInfo.contentUrl ||
+    mediaInfo.contentId ||
+    '';
+
+  const baseUrl = customData.manifestBaseUrl || dirnameUrl(originalUrl);
+  xml = injectBaseUrl(xml, baseUrl);
+
+  const blob = new Blob([xml], { type: 'application/dash+xml' });
+  lastObjectUrl = URL.createObjectURL(blob);
+
+  log('Using embedded MPD', {
+    originalUrl,
+    baseUrl,
+    bytes: xml.length,
+    objectUrl: lastObjectUrl
+  });
+
+  return lastObjectUrl;
+}
+
 async function initPlayer() {
   if (player) {
     await player.destroy();
@@ -99,13 +174,18 @@ async function initPlayer() {
 }
 
 async function loadContent(mediaInfo) {
-  const contentUrl = mediaInfo.contentUrl || mediaInfo.contentId;
-  const contentType = mediaInfo.contentType || '';
   const customData = mediaInfo.customData || {};
   const drm = customData.drm || {};
 
+  let contentUrl = createManifestObjectUrl(mediaInfo, customData);
   if (!contentUrl) {
-    throw new Error('Missing media URL');
+    contentUrl = mediaInfo.contentUrl || mediaInfo.contentId;
+  }
+
+  const contentType = mediaInfo.contentType || '';
+
+  if (!contentUrl) {
+    throw new Error('Missing media URL or embedded manifest');
   }
 
   setStatus('Loading');
@@ -117,6 +197,10 @@ async function loadContent(mediaInfo) {
 
   if (drm.headers) {
     applyRequestHeaders(shakaPlayer, drm.headers);
+  }
+
+  if (customData.headers) {
+    applyRequestHeaders(shakaPlayer, customData.headers);
   }
 
   log('contentUrl', contentUrl);
@@ -160,7 +244,8 @@ async function main() {
 
         errorData.reason = cast.framework.messages.ErrorReason.INVALID_REQUEST;
         errorData.customData = {
-          message: error.message
+          message: error.message,
+          stack: error.stack || null
         };
 
         throw errorData;
