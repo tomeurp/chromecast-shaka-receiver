@@ -14,8 +14,11 @@ const titleEl = document.getElementById('title');
 const playPauseBtn = document.getElementById('playPause');
 const seekEl = document.getElementById('seek');
 const timeEl = document.getElementById('time');
-const audioSelect = document.getElementById('audioSelect');
-const subsSelect = document.getElementById('subsSelect');
+const audioButton = document.getElementById('audioButton');
+const subsButton = document.getElementById('subsButton');
+const audioMenu = document.getElementById('audioMenu');
+const subsMenu = document.getElementById('subsMenu');
+const skipBackBtn = document.getElementById('skipBack');
 
 let player = null;
 let lastObjectUrl = null;
@@ -41,6 +44,8 @@ let controlsHideTimer = null;
 let uiTrackOptions = { audio: [], text: [] };
 let lastMediaTitle = '';
 let isSeekingUi = false;
+let openMenuEl = null;
+let lastFocusedControl = null;
 
 
 function base64UrlEncodeUtf8(text) {
@@ -465,13 +470,38 @@ function formatTime(seconds) {
   return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
 }
 
-function showControls(reason = 'activity') {
+function focusables() {
+  return Array.from(document.querySelectorAll('#controls .focusable, .track-menu.open .track-menu-item'))
+    .filter(el => el && el.offsetParent !== null && !el.disabled);
+}
+
+function focusControl(el) {
+  if (!el || typeof el.focus !== 'function') return;
+  try { el.focus(); lastFocusedControl = el; } catch (_) {}
+}
+
+function showControls(reason = 'activity', focusDefault = false) {
   if (!document.body) return;
   document.body.classList.add('controls-visible');
   clearTimeout(controlsHideTimer);
+  if (focusDefault) {
+    const target = lastFocusedControl && lastFocusedControl.offsetParent !== null ? lastFocusedControl : playPauseBtn;
+    setTimeout(() => focusControl(target), 0);
+  }
   controlsHideTimer = setTimeout(() => {
-    if (video && !video.paused) document.body.classList.remove('controls-visible');
-  }, 4500);
+    if (video && !video.paused && !openMenuEl && !document.activeElement?.closest?.('#controls')) {
+      document.body.classList.remove('controls-visible');
+    }
+  }, 5200);
+}
+
+function keepControlsVisible(reason = 'keep') {
+  showControls(reason, false);
+}
+
+function hideControlsNow() {
+  closeTrackMenus();
+  if (video && !video.paused) document.body.classList.remove('controls-visible');
 }
 
 function updatePlaybackUi() {
@@ -487,6 +517,53 @@ function updatePlaybackUi() {
 
 function optionLabel(parts) {
   return parts.filter(Boolean).join(' · ');
+}
+
+function setButtonLabel(btn, prefix, label, fallback = '') {
+  if (!btn) return;
+  const clean = label || fallback || prefix;
+  btn.textContent = `${prefix}: ${clean}`;
+}
+
+function closeTrackMenus() {
+  if (audioMenu) audioMenu.classList.remove('open');
+  if (subsMenu) subsMenu.classList.remove('open');
+  openMenuEl = null;
+  document.body.classList.remove('menu-open');
+}
+
+function openTrackMenu(menu, sourceButton) {
+  if (!menu) return;
+  const wasOpen = menu.classList.contains('open');
+  closeTrackMenus();
+  if (wasOpen) return;
+  menu.classList.add('open');
+  openMenuEl = menu;
+  document.body.classList.add('menu-open');
+  showControls('menu', false);
+  const active = menu.querySelector('.track-menu-item.active') || menu.querySelector('.track-menu-item');
+  setTimeout(() => focusControl(active || sourceButton), 0);
+}
+
+function makeMenuItem(label, active, onSelect) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'track-menu-item focusable' + (active ? ' active' : '');
+  b.setAttribute('role', 'menuitemradio');
+  b.setAttribute('aria-checked', active ? 'true' : 'false');
+  b.innerHTML = `<span>${escapeHtml(String(label || 'Track'))}</span><span class="check">✓</span>`;
+  b.addEventListener('click', () => {
+    onSelect();
+    closeTrackMenus();
+    refreshControlsTracksFromShaka();
+    showControls('menuSelect', true);
+  });
+  b.addEventListener('focus', () => { lastFocusedControl = b; showControls('menuFocus', false); });
+  return b;
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
 }
 
 function refreshControlsTracksFromShaka() {
@@ -506,44 +583,150 @@ function refreshControlsTracksFromShaka() {
       active: !!variant.active,
     });
   }
+  const textVisible = !!(player.isTextTrackVisible && player.isTextTrackVisible());
   const textOptions = textTracks.map(t => ({
     key: textKeyFromTrack(t),
     label: optionLabel([t.label || 'Subtitles', normalizeTrackLanguage(t.language)]),
-    active: !!t.active,
+    active: textVisible && !!t.active,
     track: t,
   }));
   uiTrackOptions = { audio: audioOptions, text: textOptions };
 
-  if (audioSelect) {
-    const previous = audioSelect.value;
-    audioSelect.innerHTML = '';
+  const activeAudio = audioOptions.find(o => o.active) || audioOptions[0] || null;
+  setButtonLabel(audioButton, 'Audio', activeAudio && activeAudio.label, 'None');
+  if (audioButton) audioButton.style.display = audioOptions.length > 1 ? '' : 'none';
+
+  const activeText = textOptions.find(o => o.active) || null;
+  setButtonLabel(subsButton, 'Subs', activeText ? activeText.label : 'Off', 'Off');
+  if (subsButton) subsButton.style.display = textOptions.length ? '' : 'none';
+
+  if (audioMenu) {
+    audioMenu.innerHTML = '<div class="track-menu-title">Audio</div>';
     for (const opt of audioOptions) {
-      const el = document.createElement('option');
-      el.value = opt.key;
-      el.textContent = opt.label;
-      if (opt.active) el.selected = true;
-      audioSelect.appendChild(el);
+      audioMenu.appendChild(makeMenuItem(opt.label, opt.active, () => {
+        const entry = [...castTrackMap.entries()].find(([, info]) => info.kind === 'audio' && info.key === opt.key);
+        if (entry) selectAudioTrackByCastTrackId(entry[0]);
+      }));
     }
-    if (previous && [...audioSelect.options].some(o => o.value === previous)) audioSelect.value = previous;
-    audioSelect.style.display = audioOptions.length > 1 ? '' : 'none';
   }
 
-  if (subsSelect) {
-    const previous = subsSelect.value;
-    subsSelect.innerHTML = '';
-    const off = document.createElement('option');
-    off.value = 'off';
-    off.textContent = 'Subtitles off';
-    subsSelect.appendChild(off);
+  if (subsMenu) {
+    subsMenu.innerHTML = '<div class="track-menu-title">Subtitles</div>';
+    subsMenu.appendChild(makeMenuItem('Off', !activeText, () => {
+      if (player && player.setTextTrackVisibility) player.setTextTrackVisibility(false);
+    }));
     for (const opt of textOptions) {
-      const el = document.createElement('option');
-      el.value = opt.key;
-      el.textContent = opt.label;
-      if (player.isTextTrackVisible && player.isTextTrackVisible() && opt.active) el.selected = true;
-      subsSelect.appendChild(el);
+      subsMenu.appendChild(makeMenuItem(opt.label, opt.active, () => {
+        if (opt.track && player) {
+          player.selectTextTrack(opt.track);
+          player.setTextTrackVisibility(true);
+        }
+      }));
     }
-    if (previous && [...subsSelect.options].some(o => o.value === previous)) subsSelect.value = previous;
-    subsSelect.style.display = textOptions.length ? '' : 'none';
+  }
+}
+
+function cycleAudioTrack(direction = 1) {
+  refreshControlsTracksFromShaka();
+  const opts = uiTrackOptions.audio || [];
+  if (opts.length < 2) return;
+  const idx = Math.max(0, opts.findIndex(o => o.active));
+  const next = opts[(idx + direction + opts.length) % opts.length];
+  const entry = [...castTrackMap.entries()].find(([, info]) => info.kind === 'audio' && info.key === next.key);
+  if (entry) selectAudioTrackByCastTrackId(entry[0]);
+  refreshControlsTracksFromShaka();
+  showControls('cycleAudio', true);
+}
+
+function cycleSubtitleTrack(direction = 1) {
+  refreshControlsTracksFromShaka();
+  const opts = [{ key: 'off', label: 'Off', active: !(player && player.isTextTrackVisible && player.isTextTrackVisible()) }, ...(uiTrackOptions.text || [])];
+  if (opts.length < 2) return;
+  const idx = Math.max(0, opts.findIndex(o => o.active));
+  const next = opts[(idx + direction + opts.length) % opts.length];
+  if (next.key === 'off') {
+    if (player && player.setTextTrackVisibility) player.setTextTrackVisibility(false);
+  } else if (next.track && player) {
+    player.selectTextTrack(next.track);
+    player.setTextTrackVisibility(true);
+  }
+  refreshControlsTracksFromShaka();
+  showControls('cycleSubs', true);
+}
+
+function seekBy(delta) {
+  const duration = Number.isFinite(video.duration) ? video.duration : Infinity;
+  const target = Math.max(0, Math.min(duration, (video.currentTime || 0) + delta));
+  if (Number.isFinite(target)) video.currentTime = target;
+  showControls('seekBy', true);
+  updatePlaybackUi();
+}
+
+function moveFocus(delta) {
+  const items = focusables();
+  if (!items.length) return;
+  const current = document.activeElement;
+  let idx = items.indexOf(current);
+  if (idx < 0) idx = delta > 0 ? -1 : 0;
+  const next = items[(idx + delta + items.length) % items.length];
+  focusControl(next);
+  showControls('moveFocus', false);
+}
+
+function handleReceiverKey(ev) {
+  const key = ev.key || '';
+  const code = ev.code || '';
+  const keyCode = ev.keyCode || ev.which || 0;
+  const target = ev.target;
+  const inMenu = !!target?.closest?.('.track-menu');
+  const controlsVisible = document.body.classList.contains('controls-visible') || document.body.classList.contains('menu-open');
+
+  const isAudioKey = /audio/i.test(key) || /audio/i.test(code) || keyCode === 460;
+  const isSubtitleKey = /subtitle|caption|text/i.test(key) || /subtitle|caption|text/i.test(code) || keyCode === 461;
+  if (isAudioKey) { ev.preventDefault(); cycleAudioTrack(1); return; }
+  if (isSubtitleKey) { ev.preventDefault(); cycleSubtitleTrack(1); return; }
+
+  if (key === 'MediaPlayPause' || keyCode === 179) {
+    ev.preventDefault();
+    if (video.paused) video.play().catch(e => debugLine('remote play failed', e)); else video.pause();
+    showControls('mediaPlayPause', true);
+    return;
+  }
+  if (key === 'MediaPlay' || keyCode === 415) { ev.preventDefault(); video.play().catch(e => debugLine('remote play failed', e)); showControls('play', true); return; }
+  if (key === 'MediaPause' || keyCode === 19) { ev.preventDefault(); video.pause(); showControls('pause', true); return; }
+
+  if (!controlsVisible && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter',' ','Spacebar'].includes(key)) {
+    ev.preventDefault();
+    showControls('remoteWake', true);
+    return;
+  }
+
+  if (key === 'Escape' || key === 'Backspace' || key === 'BrowserBack') {
+    ev.preventDefault();
+    if (openMenuEl) closeTrackMenus(); else hideControlsNow();
+    return;
+  }
+
+  if (key === 'ArrowLeft') {
+    ev.preventDefault();
+    if (inMenu) moveFocus(-1);
+    else if (target === seekEl || !document.activeElement?.closest?.('#controls')) seekBy(-10);
+    else moveFocus(-1);
+    return;
+  }
+  if (key === 'ArrowRight') {
+    ev.preventDefault();
+    if (inMenu) moveFocus(1);
+    else if (target === seekEl || !document.activeElement?.closest?.('#controls')) seekBy(30);
+    else moveFocus(1);
+    return;
+  }
+  if (key === 'ArrowUp') { ev.preventDefault(); moveFocus(-1); return; }
+  if (key === 'ArrowDown') { ev.preventDefault(); moveFocus(1); return; }
+
+  if (key === 'Enter' || key === ' ' || key === 'Spacebar') {
+    showControls('enter', false);
+    return;
   }
 }
 
@@ -552,53 +735,49 @@ function installControlUiHandlers() {
     ['mousemove', 'pointermove', 'click', 'touchstart'].forEach(name => {
       document.addEventListener(name, () => showControls(name), { passive: true });
     });
+    controlsEl.addEventListener('focusin', () => keepControlsVisible('focusin'));
+    controlsEl.addEventListener('focusout', () => showControls('focusout'));
   }
+  document.addEventListener('keydown', handleReceiverKey, true);
+
   if (playPauseBtn) {
     playPauseBtn.addEventListener('click', () => {
       if (video.paused) video.play().catch(e => debugLine('UI play failed', e));
       else video.pause();
-      showControls('playPause');
+      showControls('playPause', true);
     });
+    playPauseBtn.addEventListener('focus', () => { lastFocusedControl = playPauseBtn; showControls('playFocus'); });
+  }
+  if (skipBackBtn) {
+    skipBackBtn.addEventListener('click', () => seekBy(-10));
+    skipBackBtn.addEventListener('focus', () => { lastFocusedControl = skipBackBtn; showControls('backFocus'); });
   }
   if (seekEl) {
-    seekEl.addEventListener('input', () => { isSeekingUi = true; updatePlaybackUi(); showControls('seek'); });
+    seekEl.addEventListener('input', () => { isSeekingUi = true; updatePlaybackUi(); showControls('seek', false); });
     seekEl.addEventListener('change', () => {
       const t = Number(seekEl.value);
       if (Number.isFinite(t)) video.currentTime = t;
       isSeekingUi = false;
-      showControls('seekChange');
+      showControls('seekChange', true);
     });
+    seekEl.addEventListener('focus', () => { lastFocusedControl = seekEl; showControls('seekFocus', false); });
   }
-  if (audioSelect) {
-    audioSelect.addEventListener('change', () => {
-      const key = audioSelect.value;
-      const entry = [...castTrackMap.entries()].find(([, info]) => info.kind === 'audio' && info.key === key);
-      if (entry) selectAudioTrackByCastTrackId(entry[0]);
-      refreshControlsTracksFromShaka();
-      showControls('audio');
-    });
+  if (audioButton) {
+    audioButton.addEventListener('click', () => openTrackMenu(audioMenu, audioButton));
+    audioButton.addEventListener('focus', () => { lastFocusedControl = audioButton; showControls('audioFocus'); });
   }
-  if (subsSelect) {
-    subsSelect.addEventListener('change', () => {
-      const key = subsSelect.value;
-      if (key === 'off') {
-        if (player && player.setTextTrackVisibility) player.setTextTrackVisibility(false);
-      } else {
-        const opt = uiTrackOptions.text.find(t => t.key === key);
-        if (opt && opt.track && player) {
-          player.selectTextTrack(opt.track);
-          player.setTextTrackVisibility(true);
-        }
-      }
-      refreshControlsTracksFromShaka();
-      showControls('subs');
-    });
+  if (subsButton) {
+    subsButton.addEventListener('click', () => openTrackMenu(subsMenu, subsButton));
+    subsButton.addEventListener('focus', () => { lastFocusedControl = subsButton; showControls('subsFocus'); });
   }
-  ['timeupdate', 'durationchange', 'play', 'pause', 'waiting', 'playing', 'loadedmetadata'].forEach(name => {
+  ['timeupdate', 'durationchange', 'loadedmetadata'].forEach(name => {
     video.addEventListener(name, updatePlaybackUi);
   });
+  ['play', 'pause', 'waiting', 'playing', 'seeking', 'seeked'].forEach(name => {
+    video.addEventListener(name, () => { updatePlaybackUi(); showControls(name, name === 'pause' || name === 'seeking' || name === 'seeked'); });
+  });
   setInterval(updatePlaybackUi, 500);
-  showControls('startup');
+  showControls('startup', false);
 }
 
 function normalizeDrmType(type) {
@@ -1157,12 +1336,14 @@ async function main() {
   interceptMessage(playerManager, 'PLAY', requestData => {
     debugLine('CAF PLAY', requestData);
     video.play && video.play().catch(e => debugLine('video.play failed', e));
+    showControls('castPlay', true);
     return requestData;
   });
 
   interceptMessage(playerManager, 'PAUSE', requestData => {
     debugLine('CAF PAUSE', requestData);
     video.pause && video.pause();
+    showControls('castPause', true);
     return requestData;
   });
 
@@ -1170,6 +1351,7 @@ async function main() {
     debugLine('CAF SEEK', requestData);
     if (typeof requestData.currentTime === 'number' && Number.isFinite(requestData.currentTime)) {
       video.currentTime = requestData.currentTime;
+      showControls('castSeek', true);
     }
     return requestData;
   });

@@ -4,81 +4,215 @@
   <meta charset="utf-8">
   <title>Generic Shaka Cast Receiver</title>
   <style>
+    :root {
+      --etb-blue: #4aa3ff;
+      --glass: rgba(12, 14, 20, .72);
+      --glass-strong: rgba(10, 12, 18, .9);
+      --line: rgba(255,255,255,.18);
+      --text: rgba(255,255,255,.96);
+      --muted: rgba(255,255,255,.72);
+      --focus: rgba(74,163,255,.95);
+    }
+
     html, body {
       margin: 0;
       width: 100%;
       height: 100%;
       background: #000;
       overflow: hidden;
-      font-family: system-ui, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, system-ui, sans-serif;
+      color: var(--text);
     }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .24s ease;
+      background:
+        linear-gradient(to top, rgba(0,0,0,.82) 0%, rgba(0,0,0,.42) 30%, transparent 58%),
+        linear-gradient(to bottom, rgba(0,0,0,.45) 0%, transparent 34%);
+      z-index: 5;
+    }
+
+    body.controls-visible::after,
+    body.menu-open::after { opacity: 1; }
 
     video {
       width: 100%;
       height: 100%;
       background: #000;
+      display: block;
     }
 
-    #status { display: none; }
+    #status { display: none !important; }
 
     #controls {
       position: absolute;
-      left: 24px;
-      right: 24px;
-      bottom: 24px;
+      left: 50%;
+      bottom: 34px;
+      transform: translate(-50%, 18px) scale(.985);
+      width: min(1540px, calc(100% - 76px));
+      box-sizing: border-box;
       z-index: 12;
-      display: grid;
-      grid-template-columns: auto 1fr auto auto auto;
-      grid-template-rows: auto auto;
-      gap: 10px 12px;
-      align-items: center;
-      padding: 14px 16px;
-      border-radius: 14px;
-      color: #fff;
-      background: linear-gradient(to top, rgba(0,0,0,.72), rgba(0,0,0,.48));
-      font: 16px/1.2 system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       opacity: 0;
-      transform: translateY(10px);
-      transition: opacity .25s ease, transform .25s ease;
-      pointer-events: auto;
+      pointer-events: none;
+      transition: opacity .22s ease, transform .22s ease;
+      display: grid;
+      grid-template-columns: auto auto 1fr auto auto auto;
+      grid-template-areas:
+        "title title title title title title"
+        "play back seek time audio subs";
+      gap: 12px;
+      align-items: center;
+      padding: 18px 20px 20px;
+      border-radius: 26px;
+      border: 1px solid rgba(255,255,255,.16);
+      background: linear-gradient(180deg, rgba(24,27,36,.78), rgba(8,10,16,.74));
+      box-shadow: 0 22px 74px rgba(0,0,0,.56), inset 0 1px 0 rgba(255,255,255,.12);
+      backdrop-filter: blur(18px) saturate(1.2);
+      -webkit-backdrop-filter: blur(18px) saturate(1.2);
     }
 
     body.controls-visible #controls,
-    #controls:focus-within,
-    #controls:hover {
+    body.menu-open #controls,
+    #controls:focus-within {
       opacity: 1;
-      transform: translateY(0);
+      transform: translate(-50%, 0) scale(1);
+      pointer-events: auto;
     }
 
     #title {
-      grid-column: 1 / -1;
+      grid-area: title;
+      min-width: 0;
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
-      opacity: .95;
-      font-weight: 600;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      color: var(--text);
+      text-shadow: 0 1px 8px rgba(0,0,0,.45);
     }
 
-    #playPause {
-      width: 46px;
-      height: 38px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,.28);
-      background: rgba(255,255,255,.12);
+    .receiver-btn {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 999px;
+      min-width: 54px;
+      height: 48px;
+      padding: 0 18px;
       color: #fff;
-      font-size: 17px;
+      background: rgba(255,255,255,.10);
+      font: 700 16px/1 system-ui, sans-serif;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+      outline: none;
     }
 
-    #seek { width: 100%; accent-color: #fff; }
-    #time { min-width: 128px; text-align: right; opacity: .9; font-variant-numeric: tabular-nums; }
-    #audioSelect, #subsSelect {
-      max-width: 230px;
+    .receiver-btn.icon { width: 54px; padding: 0; font-size: 20px; }
+    .receiver-btn.wide { min-width: 108px; justify-content: flex-start; }
+
+    .receiver-btn:focus,
+    .receiver-btn.focused,
+    #seek:focus {
+      border-color: rgba(255,255,255,.95);
+      box-shadow: 0 0 0 4px rgba(74,163,255,.34), 0 0 28px rgba(74,163,255,.36), inset 0 1px 0 rgba(255,255,255,.18);
+      background: rgba(255,255,255,.18);
+    }
+
+    .receiver-btn:active { transform: scale(.97); }
+
+    #playPause { grid-area: play; }
+    #skipBack { grid-area: back; }
+    #audioButton { grid-area: audio; }
+    #subsButton { grid-area: subs; }
+
+    #seekWrap {
+      grid-area: seek;
+      min-width: 0;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      padding: 0 4px;
+    }
+
+    #seek {
+      width: 100%;
+      accent-color: var(--etb-blue);
+      outline: none;
+      cursor: pointer;
+    }
+
+    #time {
+      grid-area: time;
+      min-width: 152px;
+      text-align: right;
+      color: var(--muted);
+      font: 600 16px/1.1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .track-menu {
+      position: absolute;
+      right: 20px;
+      bottom: 90px;
+      display: none;
+      min-width: 300px;
+      max-width: min(520px, calc(100vw - 96px));
+      max-height: min(60vh, 520px);
+      overflow: auto;
+      padding: 10px;
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,.16);
+      background: var(--glass-strong);
+      backdrop-filter: blur(18px) saturate(1.2);
+      -webkit-backdrop-filter: blur(18px) saturate(1.2);
+      box-shadow: 0 20px 70px rgba(0,0,0,.58);
+      z-index: 16;
+    }
+
+    .track-menu.open { display: block; }
+    #audioMenu { right: 156px; }
+
+    .track-menu-title {
+      padding: 8px 12px 10px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .track-menu-item {
+      appearance: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      border: 0;
+      border-radius: 14px;
+      padding: 13px 14px;
+      margin: 2px 0;
       color: #fff;
-      background: rgba(20,20,20,.92);
-      border: 1px solid rgba(255,255,255,.28);
-      border-radius: 9px;
-      padding: 8px 10px;
-      font: inherit;
+      background: transparent;
+      font: 600 17px/1.15 system-ui, sans-serif;
+      text-align: left;
+      outline: none;
+    }
+
+    .track-menu-item .check { opacity: 0; color: var(--etb-blue); font-weight: 900; }
+    .track-menu-item.active .check { opacity: 1; }
+    .track-menu-item:focus,
+    .track-menu-item.focused,
+    .track-menu-item:hover {
+      background: rgba(255,255,255,.16);
+      box-shadow: 0 0 0 3px rgba(74,163,255,.26);
     }
 
     #debugOverlay {
@@ -130,17 +264,8 @@
       font: inherit;
     }
 
-    #debugPageLabel {
-      opacity: 0.95;
-      min-width: 180px;
-    }
-
-    #debugHint {
-      opacity: 0.75;
-      margin-left: auto;
-      font-size: 12px;
-    }
-
+    #debugPageLabel { opacity: 0.95; min-width: 180px; }
+    #debugHint { opacity: 0.75; margin-left: auto; font-size: 12px; }
 
     #qrPanel {
       display: none;
@@ -160,56 +285,30 @@
       box-shadow: 0 8px 36px rgba(0,0,0,0.55);
     }
 
-    #qrPanel.visible {
-      display: block;
-    }
-
-    #qrImage {
-      width: 320px;
-      height: 320px;
-      max-width: 100%;
-      display: block;
-      margin: 8px auto;
-      background: #fff;
-      image-rendering: pixelated;
-    }
-
-    #qrText {
-      word-break: break-all;
-      max-height: 120px;
-      overflow: auto;
-      opacity: 0.9;
-    }
-
-    #qrTitle {
-      font-weight: 700;
-      margin-bottom: 4px;
-    }
-
-    #qrHint {
-      opacity: 0.75;
-      margin-top: 6px;
-    }
-
-    body.debug #debugOverlay {
-      display: block;
-    }
-
-    body.debug #debugControls {
-      display: flex;
-    }
+    #qrPanel.visible { display: block; }
+    #qrImage { width: 320px; height: 320px; max-width: 100%; display: block; margin: 8px auto; background: #fff; image-rendering: pixelated; }
+    #qrText { word-break: break-all; max-height: 120px; overflow: auto; opacity: 0.9; }
+    #qrTitle { font-weight: 700; margin-bottom: 4px; }
+    #qrHint { opacity: 0.75; margin-top: 6px; }
+    body.debug #debugOverlay { display: block; }
+    body.debug #debugControls { display: flex; }
   </style>
 </head>
 <body>
   <video id="video" autoplay playsinline></video>
   <div id="status" aria-hidden="true">Ready</div>
-  <div id="controls">
+  <div id="controls" role="group" aria-label="Playback controls">
     <div id="title">Ready</div>
-    <button id="playPause" type="button">▶</button>
-    <input id="seek" type="range" min="0" max="0" step="0.1" value="0">
+    <button id="playPause" class="receiver-btn icon focusable" type="button" aria-label="Play or pause">▶</button>
+    <button id="skipBack" class="receiver-btn icon focusable" type="button" aria-label="Back 10 seconds">↺</button>
+    <div id="seekWrap">
+      <input id="seek" class="focusable" type="range" min="0" max="0" step="0.1" value="0" aria-label="Playback position">
+    </div>
     <div id="time">00:00 / 00:00</div>
-    <select id="audioSelect" title="Audio"></select>
-    <select id="subsSelect" title="Subtitles"></select>
+    <button id="audioButton" class="receiver-btn wide focusable" type="button" aria-label="Audio track">Audio</button>
+    <button id="subsButton" class="receiver-btn wide focusable" type="button" aria-label="Subtitles">Subs</button>
+    <div id="audioMenu" class="track-menu" role="menu" aria-label="Audio tracks"></div>
+    <div id="subsMenu" class="track-menu" role="menu" aria-label="Subtitle tracks"></div>
   </div>
   <div id="debugControls">
     <button id="debugPrev" class="debug-button">◀ Prev</button>
