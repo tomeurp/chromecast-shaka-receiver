@@ -14,8 +14,6 @@ const trackMenuRow = document.getElementById('trackMenuRow');
 const trackMenuTitle = document.getElementById('trackMenuTitle');
 
 let currentCustomData = {};
-let protectedHeaderOrigin = '';
-let protectedHeaderHost = '';
 let debugEnabled = new URLSearchParams(location.search).get('debug') === '1';
 let debugOnError = new URLSearchParams(location.search).get('debugOnError') === '1';
 let recent = [];
@@ -100,82 +98,12 @@ function normalizeHeaders(headers) {
   return out;
 }
 
-function rawAccessHeaders(customData = currentCustomData) {
-  const cd = customData || {};
+function combinedHeaders() {
+  const cd = currentCustomData || {};
   return {
     ...normalizeHeaders(cd.headers),
     ...normalizeHeaders(cd.requestHeaders)
   };
-}
-
-function rememberProtectedOriginFromMedia(media) {
-  const url = getMediaUrl(media);
-  try {
-    const parsed = new URL(url);
-    protectedHeaderOrigin = parsed.origin;
-    protectedHeaderHost = parsed.host;
-    log('protected header origin', protectedHeaderOrigin);
-  } catch (_) {
-    protectedHeaderOrigin = '';
-    protectedHeaderHost = '';
-  }
-}
-
-function requestUrlFromInfo(requestInfo) {
-  if (!requestInfo) return '';
-  const candidates = [
-    requestInfo.url,
-    requestInfo.uri,
-    requestInfo.requestUrl,
-    requestInfo.contentId,
-    requestInfo.mediaUrl,
-    requestInfo.networkRequestInfo && requestInfo.networkRequestInfo.url,
-    requestInfo.networkRequestInfo && requestInfo.networkRequestInfo.uri,
-    requestInfo.request && requestInfo.request.url,
-    requestInfo.request && requestInfo.request.uri,
-    requestInfo.request && requestInfo.request.uris && requestInfo.request.uris[0],
-    requestInfo.uris && requestInfo.uris[0]
-  ];
-
-  for (const value of candidates) {
-    if (typeof value === 'string' && value) return value;
-  }
-  return '';
-}
-
-function isProtectedHeaderUrl(url) {
-  if (!url || !protectedHeaderOrigin) return false;
-  try {
-    const parsed = new URL(url, protectedHeaderOrigin);
-    return parsed.origin === protectedHeaderOrigin;
-  } catch (_) {
-    return false;
-  }
-}
-
-function scopedAccessHeadersForUrl(url, customData = currentCustomData) {
-  if (!isProtectedHeaderUrl(url)) return {};
-  return rawAccessHeaders(customData);
-}
-
-function combinedHeaders(customData = currentCustomData) {
-  // Backwards-compatible helper for same-origin receiver/manifest fetches only.
-  return rawAccessHeaders(customData);
-}
-
-function customDataFromLoadRequest(loadRequestData) {
-  const media = loadRequestData && loadRequestData.media || {};
-  return {
-    ...(loadRequestData && loadRequestData.customData || {}),
-    ...(media.customData || {})
-  };
-}
-
-function maskHeaderNames(headers) {
-  return Object.keys(headers || {}).map(name => {
-    if (/secret|token|password|authorization/i.test(name)) return `${name}:***`;
-    return name;
-  });
 }
 
 
@@ -236,45 +164,18 @@ function applyClearKeysToShakaConfig(baseConfig) {
   return config;
 }
 
-function applyHeadersToRequestInfo(requestInfo, customData = currentCustomData) {
-  if (!requestInfo) return requestInfo;
-
-  const url = requestUrlFromInfo(requestInfo);
-  const headers = scopedAccessHeadersForUrl(url, customData);
-  if (!Object.keys(headers).length) {
-    if (rawAccessHeaders(customData) && Object.keys(rawAccessHeaders(customData)).length) {
-      log('skipped protected headers for non-protected origin', url || '[unknown-url]');
-    }
-    return requestInfo;
-  }
-
-  // CAF has used slightly different request shapes across firmware/SDK versions.
-  // Set headers on all known containers, but only when the request URL is under
-  // the same origin as the protected manifest/tunnel (for example mfp.tomeurp.com).
-  const targets = [requestInfo];
-  if (requestInfo.networkRequestInfo) targets.push(requestInfo.networkRequestInfo);
-  if (requestInfo.request) targets.push(requestInfo.request);
-
-  for (const target of targets) {
-    target.headers = target.headers || {};
-    for (const [name, value] of Object.entries(headers)) target.headers[name] = value;
-
-    target.requestHeaders = target.requestHeaders || {};
-    for (const [name, value] of Object.entries(headers)) target.requestHeaders[name] = value;
-  }
-
-  log('applied protected headers', { url, headerNames: maskHeaderNames(headers) });
-  return requestInfo;
+function applyHeadersToRequestInfo(requestInfo) {
+  const headers = combinedHeaders();
+  if (!Object.keys(headers).length || !requestInfo) return;
+  requestInfo.headers = requestInfo.headers || {};
+  for (const [name, value] of Object.entries(headers)) requestInfo.headers[name] = value;
 }
 
-function applyHeadersToShakaRequest(request, customData = currentCustomData) {
-  if (!request) return;
-  const url = requestUrlFromInfo(request);
-  const headers = scopedAccessHeadersForUrl(url, customData);
-  if (!Object.keys(headers).length) return;
+function applyHeadersToShakaRequest(request) {
+  const headers = combinedHeaders();
+  if (!Object.keys(headers).length || !request) return;
   request.headers = request.headers || {};
   for (const [name, value] of Object.entries(headers)) request.headers[name] = value;
-  log('applied Shaka protected headers', { url, headerNames: maskHeaderNames(headers) });
 }
 
 function isHlsLike(media) {
@@ -311,7 +212,7 @@ function absoluteUrl(base, maybeRelative) {
 }
 
 async function fetchText(url) {
-  const headers = scopedAccessHeadersForUrl(url);
+  const headers = combinedHeaders();
   const response = await fetch(url, {
     mode: 'cors',
     credentials: 'omit',
@@ -445,7 +346,6 @@ async function normalizeLoadRequest(loadRequestData) {
   debugEnabled = !!(debugEnabled || currentCustomData.debug);
 
   if (!media.contentUrl && media.contentId) media.contentUrl = media.contentId;
-  rememberProtectedOriginFromMedia(media);
 
   if (!media.contentType) {
     if (isHlsLike(media)) media.contentType = 'application/x-mpegURL';
@@ -477,48 +377,31 @@ async function normalizeLoadRequest(loadRequestData) {
 }
 
 function buildPlaybackConfig(loadRequestData, playbackConfig) {
-  // Do not rely on the async LOAD interceptor having run first.  CAF may ask for
-  // PlaybackConfig before/while the interceptor is resolving, so extract the
-  // customData here too.  This is critical for Cloudflare Access headers on the
-  // very first MPD/HLS manifest request.
-  const cdFromLoad = customDataFromLoadRequest(loadRequestData);
-  currentCustomData = {
-    ...(currentCustomData || {}),
-    ...cdFromLoad
-  };
-  const cd = currentCustomData || {};
-
   const config = playbackConfig || new cast.framework.PlaybackConfig();
+  const cd = currentCustomData || {};
 
   const oldManifestHandler = config.manifestRequestHandler;
   const oldSegmentHandler = config.segmentRequestHandler;
   const oldLicenseHandler = config.licenseRequestHandler;
 
   config.manifestRequestHandler = requestInfo => {
-    const result = oldManifestHandler ? oldManifestHandler(requestInfo) : undefined;
-    applyHeadersToRequestInfo(result || requestInfo, cd);
-    return result || requestInfo;
+    applyHeadersToRequestInfo(requestInfo);
+    if (oldManifestHandler) oldManifestHandler(requestInfo);
   };
 
   config.segmentRequestHandler = requestInfo => {
-    const result = oldSegmentHandler ? oldSegmentHandler(requestInfo) : undefined;
-    applyHeadersToRequestInfo(result || requestInfo, cd);
-    return result || requestInfo;
+    applyHeadersToRequestInfo(requestInfo);
+    if (oldSegmentHandler) oldSegmentHandler(requestInfo);
   };
 
   config.licenseRequestHandler = requestInfo => {
-    const result = oldLicenseHandler ? oldLicenseHandler(requestInfo) : undefined;
-    const target = result || requestInfo;
-    applyHeadersToRequestInfo(target, cd);
-
+    applyHeadersToRequestInfo(requestInfo);
     const drmHeaders = normalizeHeaders(cd.drm && cd.drm.headers);
     if (Object.keys(drmHeaders).length) {
-      target.headers = target.headers || {};
-      Object.assign(target.headers, drmHeaders);
-      target.requestHeaders = target.requestHeaders || {};
-      Object.assign(target.requestHeaders, drmHeaders);
+      requestInfo.headers = requestInfo.headers || {};
+      Object.assign(requestInfo.headers, drmHeaders);
     }
-    return target;
+    if (oldLicenseHandler) oldLicenseHandler(requestInfo);
   };
 
   if (cd.drm && cd.drm.licenseUrl) config.licenseUrl = cd.drm.licenseUrl;
@@ -531,12 +414,6 @@ function buildPlaybackConfig(loadRequestData, playbackConfig) {
     ...(cd.shakaConfig || {})
   };
   config.shakaConfig = applyClearKeysToShakaConfig(mergedUserShakaConfig);
-
-  log('PlaybackConfig ready', {
-    hasHeaders: Object.keys(rawAccessHeaders(cd)).length > 0,
-    headerNames: maskHeaderNames(rawAccessHeaders(cd)),
-    hasClearKeys: !!getClearKeysFromCustomData()
-  });
 
   return config;
 }
