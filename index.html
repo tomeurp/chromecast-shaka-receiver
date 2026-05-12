@@ -2,78 +2,8 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ETB Shaka Cast Receiver</title>
-  <meta http-equiv="Access-Control-Allow-Origin" content="*">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.10.9/controls.min.css">
-  <style>
-    html, body {
-      margin: 0;
-      width: 100%;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-
-    [data-shaka-player-container] {
-      position: fixed;
-      inset: 0;
-      width: 100vw;
-      height: 100vh;
-      background: #000;
-    }
-
-    video {
-      width: 100%;
-      height: 100%;
-      background: #000;
-      object-fit: contain;
-    }
-
-    /* Do not add any custom fullscreen overlay. Keep only Shaka native UI. */
-    .shaka-controls-container {
-      font-family: inherit;
-    }
-
-    .shaka-spinner-container,
-    .shaka-spinner,
-    .shaka-spinner-svg {
-      pointer-events: none;
-    }
-
-    #debug {
-      display: none;
-      position: fixed;
-      left: 24px;
-      right: 24px;
-      top: 24px;
-      z-index: 9999;
-      padding: 16px 18px;
-      border-radius: 14px;
-      background: rgba(0, 0, 0, 0.72);
-      color: #fff;
-      font-size: 20px;
-      line-height: 1.35;
-      white-space: pre-wrap;
-      max-height: 45vh;
-      overflow: hidden;
-      pointer-events: none;
-    }
-
-    body.debug-visible #debug {
-      display: block;
-    }
-  </style>
+  <meta http-equiv="refresh" content="0; url=receiver.html">
+  <title>Generic Shaka Cast Receiver</title>
 </head>
-<body>
-  <div data-shaka-player-container>
-    <video id="video" data-shaka-player autoplay playsinline></video>
-  </div>
-  <pre id="debug"></pre>
-
-  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.10.9/shaka-player.ui.js"></script>
-  <script src="receiver.js"></script>
-</body>
+<body></body>
 </html>

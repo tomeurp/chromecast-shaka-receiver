@@ -1,12 +1,14 @@
-# ETB Shaka Cast Receiver v6
+# Chromecast Shaka Receiver - v2 base + native Shaka UI
 
-Stable TV UI rebuild:
-- no fullscreen black overlay; only a bottom gradient when controls are visible
-- top row: scrubber with buffer health + time
-- bottom row: icon-only controls
-- deterministic remote focus; does not rely on native browser focus only
-- autohide timer
-- STOP/PLAY/PAUSE/seek handling
-- audio/subtitle/quality menus
-- optional Cloudflare Access headers from `media.customData.headers`
-- debug only with `customData.debug` or `customData.debugOnError`
+This version intentionally uses the previously working v2 receiver as the base.
+
+Changes:
+- Keeps the v2 Cast/CAF load path, Cloudflare header injection, DRM/ClearKey support and debug-on-error plumbing.
+- Removes custom playback overlays and focus engines.
+- Loads Shaka UI (`shaka-player.ui.js` + `controls.css`) and creates `shaka.ui.Overlay(player, container, video)`.
+- Status overlay is hidden by default so it cannot cover the video.
+- Debug overlay is still opt-in only via `customData.debug` or `?debug=1`.
+- Cloudflare headers are injected only when `customData.headers` or `customData.drm.headers` are present.
+
+Recommended Cast media type for MediaFlow HLS:
+`application/x-mpegURL`
