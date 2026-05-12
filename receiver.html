@@ -3,278 +3,284 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ETB Shaka Receiver</title>
+  <title>ETB Shaka Cast Receiver</title>
   <style>
     :root {
-      --etb-blue: #4aa3ff;
-      --etb-blue-2: #7cc0ff;
-      --glass: rgba(17, 20, 28, .72);
-      --glass-strong: rgba(10, 12, 18, .92);
-      --line: rgba(255,255,255,.18);
+      --accent: #5ecbff;
+      --accent-soft: rgba(94, 203, 255, .35);
+      --glass: rgba(22, 25, 34, .46);
+      --glass-strong: rgba(16, 18, 25, .84);
+      --line: rgba(255,255,255,.22);
       --text: rgba(255,255,255,.96);
-      --muted: rgba(255,255,255,.68);
-      --focus: rgba(74,163,255,.96);
+      --muted: rgba(255,255,255,.66);
+      --shadow: rgba(0,0,0,.52);
     }
     html, body {
       margin: 0;
       width: 100%;
       height: 100%;
-      background: #000;
       overflow: hidden;
+      background: #000;
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, system-ui, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     }
     #video {
       position: fixed;
       inset: 0;
+      z-index: 1;
       width: 100%;
       height: 100%;
       object-fit: contain;
       background: #000;
-      z-index: 1;
     }
-    #status {
+    #shade {
       position: fixed;
-      left: 28px;
-      top: 24px;
-      z-index: 30;
-      max-width: calc(100vw - 56px);
-      color: rgba(255,255,255,.82);
-      font: 600 18px/1.25 system-ui, sans-serif;
-      opacity: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 38vh;
+      z-index: 2;
       pointer-events: none;
-      transition: opacity .2s ease;
-      text-shadow: 0 2px 10px rgba(0,0,0,.7);
+      opacity: 0;
+      transition: opacity .18s ease;
+      background: linear-gradient(to top, rgba(0,0,0,.72), rgba(0,0,0,.34) 48%, rgba(0,0,0,0));
     }
-    body.debug #status, body.error #status { opacity: 1; }
-    #controls {
+    body.ui-visible #shade,
+    body.paused #shade,
+    body.menu-open #shade { opacity: 1; }
+
+    #ui {
       position: fixed;
       left: 50%;
-      bottom: 34px;
-      width: min(1560px, calc(100vw - 80px));
+      bottom: 52px;
       transform: translate(-50%, 18px);
-      z-index: 20;
-      padding: 18px 20px 18px;
-      border: 1px solid rgba(255,255,255,.16);
-      border-radius: 28px;
-      background: linear-gradient(180deg, rgba(24,27,36,.76), rgba(8,10,16,.72));
-      box-shadow: 0 22px 74px rgba(0,0,0,.56), inset 0 1px 0 rgba(255,255,255,.12);
-      backdrop-filter: blur(18px) saturate(1.2);
-      -webkit-backdrop-filter: blur(18px) saturate(1.2);
+      z-index: 10;
+      width: min(1480px, calc(100vw - 128px));
       opacity: 0;
       pointer-events: none;
-      transition: opacity .20s ease, transform .20s ease;
-      box-sizing: border-box;
+      transition: opacity .18s ease, transform .18s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
     }
-    body.controls-visible #controls,
-    body.menu-open #controls,
-    #controls:focus-within {
+    body.ui-visible #ui,
+    body.paused #ui,
+    body.menu-open #ui {
       opacity: 1;
       transform: translate(-50%, 0);
       pointer-events: auto;
     }
+
     #title {
+      max-width: 55vw;
       overflow: hidden;
-      white-space: nowrap;
       text-overflow: ellipsis;
-      margin: 0 0 14px;
-      font-size: 22px;
-      font-weight: 750;
-      letter-spacing: -.01em;
-      text-shadow: 0 1px 8px rgba(0,0,0,.45);
+      white-space: nowrap;
+      font-size: 24px;
+      font-weight: 780;
+      letter-spacing: -.02em;
+      text-shadow: 0 2px 14px rgba(0,0,0,.72);
     }
-    .controls-main {
+    #timelineRow {
       display: grid;
-      grid-template-columns: auto auto minmax(360px, 1fr) auto;
-      gap: 14px;
+      grid-template-columns: 74px minmax(180px,1fr) 88px;
+      gap: 20px;
       align-items: center;
     }
-    .controls-secondary {
-      margin-top: 14px;
-      padding-left: 132px;
-      display: flex;
-      gap: 12px;
-      align-items: center;
+    .time {
+      color: var(--muted);
+      font: 720 17px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums;
+      text-shadow: 0 2px 12px rgba(0,0,0,.8);
     }
-    .receiver-btn {
-      appearance: none;
-      border: 1px solid rgba(255,255,255,.16);
+    #durationText { text-align: right; }
+    #scrubber {
+      position: relative;
+      height: 36px;
+      outline: none;
       border-radius: 999px;
-      min-width: 56px;
-      height: 50px;
-      padding: 0 18px;
+      display: flex;
+      align-items: center;
+    }
+    #scrubber::before {
+      content: "";
+      position: absolute;
+      inset: 8px 0;
+      border-radius: 999px;
+      background: rgba(255,255,255,.23);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,.5);
+    }
+    #bufferBar, #progressBar {
+      position: absolute;
+      left: 0;
+      top: 8px;
+      height: 20px;
+      width: 0%;
+      border-radius: 999px;
+      pointer-events: none;
+    }
+    #bufferBar { background: rgba(255,255,255,.38); }
+    #progressBar { background: linear-gradient(90deg, rgba(94,203,255,.95), rgba(255,255,255,.82)); }
+    #thumb {
+      position: absolute;
+      top: 50%;
+      left: 0%;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 4px 16px rgba(0,0,0,.55);
+      transform: translate(-50%, -50%) scale(.72);
+      opacity: 0;
+      transition: opacity .12s ease, transform .12s ease;
+    }
+    #scrubber.focused #thumb,
+    #scrubber:focus #thumb {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    #scrubber.focused::before,
+    #scrubber:focus::before {
+      box-shadow: 0 0 0 5px var(--accent-soft), inset 0 1px 2px rgba(0,0,0,.5);
+    }
+
+    #buttonRow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+    }
+    .tv-btn {
+      width: 66px;
+      height: 66px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.20);
+      background: var(--glass);
       color: #fff;
-      background: rgba(255,255,255,.10);
-      font: 750 16px/1 system-ui, sans-serif;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 9px;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
       outline: none;
+      padding: 0;
+      box-shadow: 0 12px 32px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.12);
+      -webkit-backdrop-filter: blur(14px) saturate(1.2);
+      backdrop-filter: blur(14px) saturate(1.2);
+      transform: scale(1);
+      transition: transform .12s ease, background .12s ease, border-color .12s ease, box-shadow .12s ease;
     }
-    .receiver-btn.icon { width: 56px; padding: 0; }
-    .receiver-btn.wide { min-width: 128px; justify-content: flex-start; }
-    .receiver-btn svg { width: 24px; height: 24px; flex: 0 0 auto; }
-    .receiver-btn:focus, .receiver-btn.focused, #scrubber:focus {
-      border-color: rgba(255,255,255,.95);
-      box-shadow: 0 0 0 4px rgba(74,163,255,.34), 0 0 28px rgba(74,163,255,.34), inset 0 1px 0 rgba(255,255,255,.18);
+    .tv-btn svg { width: 30px; height: 30px; display: block; fill: currentColor; }
+    .tv-btn.focused,
+    .tv-btn:focus {
+      transform: scale(1.12);
       background: rgba(255,255,255,.18);
+      border-color: #fff;
+      box-shadow: 0 0 0 6px var(--accent-soft), 0 18px 44px rgba(0,0,0,.44), inset 0 1px 0 rgba(255,255,255,.20);
     }
-    .receiver-btn:active { transform: scale(.98); }
-    .time {
-      min-width: 172px;
-      text-align: right;
-      color: var(--muted);
-      font: 650 16px/1.1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-variant-numeric: tabular-nums;
-    }
-    .scrubber-wrap {
-      position: relative;
-      height: 50px;
-      display: flex;
-      align-items: center;
-      min-width: 0;
-    }
-    .scrubber-rail {
-      position: absolute;
-      left: 0;
-      right: 0;
-      top: 50%;
-      height: 8px;
-      border-radius: 999px;
-      transform: translateY(-50%);
-      background: rgba(255,255,255,.18);
-      overflow: hidden;
-      pointer-events: none;
-    }
-    #bufferBar, #playedBar {
-      position: absolute;
-      top: 0;
-      left: 0;
-      height: 100%;
-      width: 0%;
-      border-radius: inherit;
-    }
-    #bufferBar { background: rgba(255,255,255,.32); }
-    #playedBar { background: linear-gradient(90deg, var(--etb-blue), var(--etb-blue-2)); }
-    #scrubber {
-      position: relative;
-      z-index: 2;
-      width: 100%;
-      height: 50px;
-      opacity: 0.001;
-      cursor: pointer;
-      outline: none;
-    }
-    .track-menu {
+    .tv-btn.disabled { opacity: .42; }
+
+    .menu {
       position: fixed;
-      right: 58px;
-      bottom: 155px;
-      display: none;
+      z-index: 20;
+      left: 50%;
+      bottom: 146px;
+      transform: translateX(-50%);
       min-width: 340px;
-      max-width: min(560px, calc(100vw - 96px));
-      max-height: min(58vh, 560px);
-      overflow: auto;
-      padding: 10px;
-      border-radius: 22px;
-      border: 1px solid rgba(255,255,255,.16);
+      max-width: min(620px, calc(100vw - 160px));
+      max-height: min(55vh, 540px);
+      overflow: hidden auto;
+      display: none;
+      padding: 14px;
+      border-radius: 26px;
+      border: 1px solid var(--line);
       background: var(--glass-strong);
-      backdrop-filter: blur(18px) saturate(1.2);
-      -webkit-backdrop-filter: blur(18px) saturate(1.2);
-      box-shadow: 0 20px 70px rgba(0,0,0,.58);
-      z-index: 28;
+      box-shadow: 0 22px 80px rgba(0,0,0,.64), inset 0 1px 0 rgba(255,255,255,.10);
+      -webkit-backdrop-filter: blur(22px) saturate(1.2);
+      backdrop-filter: blur(22px) saturate(1.2);
     }
-    .track-menu.open { display: block; }
-    .track-menu-title {
-      padding: 8px 12px 10px;
+    .menu.open { display: block; }
+    .menu-title {
+      padding: 8px 14px 12px;
       color: var(--muted);
       font-size: 13px;
       font-weight: 850;
       text-transform: uppercase;
       letter-spacing: .08em;
     }
-    .track-menu-item {
-      appearance: none;
+    .menu-item {
+      width: 100%;
+      min-height: 54px;
+      border: 3px solid transparent;
+      border-radius: 18px;
+      background: transparent;
+      color: #fff;
+      outline: none;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 20px;
-      width: 100%;
-      border: 0;
-      border-radius: 15px;
-      padding: 14px 15px;
-      margin: 2px 0;
-      color: #fff;
-      background: transparent;
-      font: 650 18px/1.15 system-ui, sans-serif;
+      gap: 18px;
+      padding: 12px 14px;
+      font: 740 18px/1.15 system-ui, sans-serif;
       text-align: left;
-      outline: none;
     }
-    .track-menu-item .check { opacity: 0; color: var(--etb-blue); font-weight: 900; }
-    .track-menu-item.active .check { opacity: 1; }
-    .track-menu-item:focus, .track-menu-item:hover {
-      background: rgba(255,255,255,.16);
-      box-shadow: 0 0 0 3px rgba(74,163,255,.26);
+    .menu-item .check { opacity: 0; color: var(--accent); font-weight: 1000; }
+    .menu-item.active .check { opacity: 1; }
+    .menu-item.focused,
+    .menu-item:focus {
+      background: rgba(255,255,255,.14);
+      border-color: #fff;
+      box-shadow: 0 0 0 5px var(--accent-soft);
     }
-    #debugOverlay {
+
+    #debug {
       display: none;
       position: fixed;
       inset: 18px;
-      z-index: 100;
-      padding: 18px;
+      z-index: 90;
       overflow: auto;
+      padding: 18px;
+      background: rgba(0,0,0,.88);
+      color: #d8ffd8;
+      border: 1px solid rgba(255,255,255,.28);
+      border-radius: 14px;
+      font: 13px/1.38 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       white-space: pre-wrap;
-      color: #dff0ff;
-      background: rgba(0,0,0,.86);
-      border: 1px solid rgba(255,255,255,.22);
-      border-radius: 18px;
-      font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
-    body.debug #debugOverlay { display: block; }
+    body.debug #debug { display: block; }
   </style>
-  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.compiled.js"></script>
 </head>
 <body>
   <video id="video" autoplay playsinline></video>
-  <div id="status"></div>
+  <div id="shade" aria-hidden="true"></div>
 
-  <section id="controls" aria-label="Controles de reproducción">
+  <section id="ui" aria-label="Controles de reproducción">
     <div id="title">ETB</div>
-    <div class="controls-main">
-      <button id="playPause" class="receiver-btn icon tv-focus" tabindex="0" type="button" aria-label="Reproducir o pausar">
-        <svg id="playIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
-      </button>
-      <button id="skipBack" class="receiver-btn icon tv-focus" tabindex="0" type="button" aria-label="Retroceder 10 segundos">
-        <svg viewBox="0 0 56 56" aria-hidden="true"><path fill="currentColor" d="M28 54.4C14.9 54.4 4.1 43.6 4.1 30.5 4.1 22.6 8.1 15.5 14.1 11.2c1-.8 2.3-.5 2.9.4.6 1 .3 2.1-.7 2.8-5 3.6-8.2 9.4-8.2 16.1 0 11.1 8.9 19.9 19.9 19.9s19.9-8.9 19.9-19.9c0-9.5-6.5-17.4-15.4-19.4v3.4c0 1.7-1.1 2.1-2.4 1.2l-7.5-5.3c-1.1-.7-1.1-1.9 0-2.6l7.5-5.3c1.3-.9 2.4-.5 2.4 1.2V7c11 2.2 19.4 12 19.4 23.5 0 13.1-10.8 23.9-23.9 23.9z"/></svg>
-      </button>
-      <div class="scrubber-wrap">
-        <div class="scrubber-rail"><div id="bufferBar"></div><div id="playedBar"></div></div>
-        <input id="scrubber" class="tv-focus" tabindex="0" type="range" min="0" max="1000" value="0" step="1" aria-label="Posición">
+    <div id="timelineRow">
+      <div id="currentText" class="time">0:00</div>
+      <div id="scrubber" class="focusable" tabindex="0" role="slider" aria-label="Posición" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+        <div id="bufferBar"></div>
+        <div id="progressBar"></div>
+        <div id="thumb"></div>
       </div>
-      <div id="time" class="time">--:-- / --:--</div>
+      <div id="durationText" class="time">0:00</div>
     </div>
-    <div class="controls-secondary">
-      <button id="audioButton" class="receiver-btn wide tv-focus" tabindex="0" type="button" aria-label="Audio">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h4l5-4v13l-5-4H4z" fill="currentColor"/><path d="M16 9a5 5 0 0 1 0 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.5 6.5a8.5 8.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <span>Audio</span>
-      </button>
-      <button id="subsButton" class="receiver-btn wide tv-focus" tabindex="0" type="button" aria-label="Subtítulos">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 11h5M7 15h3M13 15h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <span>Subtítulos</span>
-      </button>
-      <button id="qualityButton" class="receiver-btn wide tv-focus" tabindex="0" type="button" aria-label="Calidad">
-        <svg viewBox="0 0 56 56" aria-hidden="true"><path fill="currentColor" d="M28 50.8c.6 0 1.2-.1 1.8-.1l1.4 2.6c.3.5.8.8 1.4.7.6-.1 1-.5 1.1-1.2l.4-2.8c1.1-.3 2.3-.8 3.4-1.2l2.1 1.9c.4.4 1 .5 1.6.2.5-.3.7-.8.6-1.5l-.6-2.8c1-.7 1.9-1.5 2.8-2.3l2.6 1.1c.6.2 1.1.1 1.6-.4.4-.4.4-1 .1-1.5l-1.5-2.4c.7-1 1.3-2 1.8-3.2l2.9.1c.6 0 1.1-.3 1.3-.9.2-.6 0-1.1-.5-1.5l-2.2-1.8c.3-1.1.5-2.3.6-3.6l2.7-.8c.6-.2 1-.7 1-1.3s-.4-1.1-1-1.3l-2.7-.9c-.1-1.3-.3-2.4-.6-3.6l2.2-1.8c.5-.4.7-.9.5-1.5-.2-.6-.7-.9-1.3-.9l-2.9.1c-.5-1.1-1.1-2.2-1.8-3.2l1.5-2.4c.3-.5.3-1.1-.1-1.5-.4-.5-1-.7-1.6-.4L44 11.7c-.9-.8-1.8-1.6-2.8-2.3l.6-2.8c.1-.6-.1-1.2-.6-1.5-.6-.3-1.1-.3-1.6.2l-2.1 1.9c-1.1-.5-2.2-.9-3.4-1.2l-.4-2.8c-.1-.6-.5-1.1-1.1-1.2-.6-.1-1.1.2-1.4.7l-1.4 2.6c-.6 0-1.2-.1-1.8-.1s-1.2 0-1.9.1l-1.3-2.6c-.3-.5-.8-.8-1.5-.7-.6.1-1 .5-1.1 1.2l-.4 2.8c-1.2.4-2.3.8-3.4 1.2l-2.1-1.9c-.5-.5-1-.5-1.6-.2-.5.3-.7.9-.6 1.5l.6 2.8c-1 .7-2 1.5-2.8 2.3l-2.6-1.1c-.6-.3-1.1-.1-1.6.4-.4.4-.4 1-.1 1.5l1.5 2.5c-.7 1-1.3 2-1.8 3.2l-2.9-.1c-.6 0-1.1.3-1.3.9-.2.6 0 1.1.5 1.5l2.2 1.8c-.3 1.1-.6 2.3-.6 3.6l-2.7.9c-.6.2-.9.6-.9 1.3 0 .6.3 1.1.9 1.3l2.7.9c.1 1.2.3 2.4.6 3.5l-2.2 1.8c-.5.4-.7.9-.5 1.5.2.6.7.9 1.3.9l2.9-.1c.5 1.1 1.1 2.2 1.8 3.2l-1.5 2.4c-.3.5-.3 1.1.1 1.5.4.5 1 .7 1.6.4l2.6-1.1c.9.9 1.8 1.6 2.8 2.3l-.6 2.8c-.1.6.1 1.2.6 1.5.6.3 1.1.2 1.6-.2l2.1-1.9c1.1.5 2.2.9 3.4 1.2l.4 2.8c.1.6.5 1.1 1.1 1.2.7.1 1.2-.2 1.5-.7l1.3-2.6c.7 0 1.3.1 1.9.1zm0-16.6a6.2 6.2 0 1 1 0-12.4 6.2 6.2 0 0 1 0 12.4z"/></svg>
-        <span>Calidad</span>
-      </button>
+    <div id="buttonRow">
+      <button id="restartBtn" class="tv-btn focusable" tabindex="-1" aria-label="Reiniciar"></button>
+      <button id="rewBtn" class="tv-btn focusable" tabindex="-1" aria-label="Retroceder 10 segundos"></button>
+      <button id="playBtn" class="tv-btn focusable" tabindex="-1" aria-label="Reproducir o pausar"></button>
+      <button id="fwdBtn" class="tv-btn focusable" tabindex="-1" aria-label="Avanzar 10 segundos"></button>
+      <button id="audioBtn" class="tv-btn focusable" tabindex="-1" aria-label="Audio"></button>
+      <button id="subsBtn" class="tv-btn focusable" tabindex="-1" aria-label="Subtítulos"></button>
+      <button id="qualityBtn" class="tv-btn focusable" tabindex="-1" aria-label="Calidad"></button>
     </div>
   </section>
 
-  <div id="audioMenu" class="track-menu" aria-label="Seleccionar audio"></div>
-  <div id="subsMenu" class="track-menu" aria-label="Seleccionar subtítulos"></div>
-  <div id="qualityMenu" class="track-menu" aria-label="Seleccionar calidad"></div>
-  <pre id="debugOverlay"></pre>
+  <div id="audioMenu" class="menu" role="menu"></div>
+  <div id="subsMenu" class="menu" role="menu"></div>
+  <div id="qualityMenu" class="menu" role="menu"></div>
+  <pre id="debug"></pre>
+
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.10.9/shaka-player.compiled.js"></script>
   <script src="receiver.js"></script>
 </body>
 </html>
