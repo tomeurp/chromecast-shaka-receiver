@@ -12,7 +12,9 @@ const qrText = document.getElementById('qrText');
 
 let player = null;
 let lastObjectUrl = null;
-let debugEnabled = new URLSearchParams(location.search).get('debug') === '1';
+const queryParams = new URLSearchParams(location.search);
+let debugEnabled = queryParams.get('debug') === '1';
+let autoDebugOnError = queryParams.get('debugOnError') === '1';
 let lastLoad = null;
 let lastRequest = null;
 let lastResponse = null;
@@ -24,6 +26,10 @@ let debugTextCache = '';
 let debugPage = 0;
 let debugAutoScroll = true;
 let debugAutoTimer = null;
+let currentMediaInfoForStatus = null;
+let currentActiveTrackIds = [];
+let castTrackMap = new Map();
+let playerManagerRef = null;
 
 
 function base64UrlEncodeUtf8(text) {
@@ -415,7 +421,7 @@ function buildDebugText(extra = '') {
 }
 
 function showError(title, error) {
-  enableDebug('error');
+  if (debugEnabled || autoDebugOnError) enableDebug('error');
   const rawDetail = error && error.detail ? error.detail : error;
   const detail = rawDetail && rawDetail.code && rawDetail.category && rawDetail.severity ? describeShakaError(rawDetail) : rawDetail;
   videoSnapshot(title);
@@ -645,6 +651,193 @@ async function initPlayer() {
   return player;
 }
 
+
+function headerObjectFromCustomData(customData = {}) {
+  const drm = customData.drm || {};
+  return {
+    ...(customData.headers || {}),
+    ...(drm.headers || {})
+  };
+}
+
+function normalizeTrackLanguage(value) {
+  const lang = String(value || '').trim();
+  return lang || 'und';
+}
+
+function audioKeyFromVariant(track) {
+  return [
+    normalizeTrackLanguage(track.language || track.audioLanguage),
+    track.audioId || '',
+    Array.isArray(track.roles) ? track.roles.join(',') : '',
+    track.label || ''
+  ].join('|');
+}
+
+function textKeyFromTrack(track) {
+  return [
+    normalizeTrackLanguage(track.language),
+    track.id || '',
+    Array.isArray(track.roles) ? track.roles.join(',') : '',
+    track.label || ''
+  ].join('|');
+}
+
+function makeCastTrack(id, type, fields) {
+  return {
+    trackId: id,
+    type,
+    ...fields
+  };
+}
+
+function collectCastTracksFromShaka(shakaPlayer) {
+  const castTracks = [];
+  const activeTrackIds = [];
+  castTrackMap = new Map();
+
+  let nextAudioId = 1;
+  let nextTextId = 1001;
+
+  const audioSeen = new Map();
+  const variants = shakaPlayer.getVariantTracks ? shakaPlayer.getVariantTracks() : [];
+  for (const variant of variants) {
+    const key = audioKeyFromVariant(variant);
+    if (audioSeen.has(key)) continue;
+    const id = nextAudioId++;
+    audioSeen.set(key, id);
+
+    const language = normalizeTrackLanguage(variant.language || variant.audioLanguage);
+    const name = variant.label || `Audio ${language}`;
+    castTracks.push(makeCastTrack(id, 'AUDIO', {
+      name,
+      language,
+      roles: variant.roles || [],
+      customData: { shakaKind: 'audio', key, language, audioId: variant.audioId || null }
+    }));
+    castTrackMap.set(id, { kind: 'audio', key, language, variant });
+
+    if (variant.active && !activeTrackIds.includes(id)) activeTrackIds.push(id);
+  }
+
+  const texts = shakaPlayer.getTextTracks ? shakaPlayer.getTextTracks() : [];
+  for (const textTrack of texts) {
+    const id = nextTextId++;
+    const language = normalizeTrackLanguage(textTrack.language);
+    const mime = textTrack.mimeType || 'text/vtt';
+    const name = textTrack.label || `Subtitles ${language}`;
+    castTracks.push(makeCastTrack(id, 'TEXT', {
+      name,
+      language,
+      trackContentType: mime,
+      subtype: 'SUBTITLES',
+      roles: textTrack.roles || [],
+      customData: { shakaKind: 'text', key: textKeyFromTrack(textTrack), language, shakaId: textTrack.id }
+    }));
+    castTrackMap.set(id, { kind: 'text', textTrack, language });
+  }
+
+  if (shakaPlayer.isTextTrackVisible && shakaPlayer.isTextTrackVisible()) {
+    const activeText = texts.find(t => t.active) || texts[0];
+    if (activeText) {
+      for (const [id, info] of castTrackMap.entries()) {
+        if (info.kind === 'text' && info.textTrack === activeText) activeTrackIds.push(id);
+      }
+    }
+  }
+
+  currentActiveTrackIds = activeTrackIds;
+  lastTracks = {
+    variantTracks: variants,
+    textTracks: texts,
+    castTracks,
+    activeTrackIds
+  };
+
+  return { castTracks, activeTrackIds };
+}
+
+function updateCastMediaTracksOnStatus(mediaInfo, trackState) {
+  if (!mediaInfo || !trackState) return;
+  mediaInfo.tracks = trackState.castTracks;
+  mediaInfo.activeTrackIds = trackState.activeTrackIds;
+  currentMediaInfoForStatus = mediaInfo;
+  currentActiveTrackIds = trackState.activeTrackIds;
+
+  try {
+    if (playerManagerRef && typeof playerManagerRef.setMediaInformation === 'function') {
+      playerManagerRef.setMediaInformation(mediaInfo);
+    }
+    if (playerManagerRef && typeof playerManagerRef.broadcastStatus === 'function') {
+      playerManagerRef.broadcastStatus(true);
+    }
+  } catch (e) {
+    debugLine('CAF track status update failed', e);
+  }
+}
+
+function selectAudioTrackByCastTrackId(trackId) {
+  if (!player || !castTrackMap.has(trackId)) return false;
+  const info = castTrackMap.get(trackId);
+  if (!info || info.kind !== 'audio') return false;
+
+  const variants = player.getVariantTracks ? player.getVariantTracks() : [];
+  const current = variants.find(v => v.active) || null;
+  const candidates = variants.filter(v => audioKeyFromVariant(v) === info.key);
+  const target =
+    (current && candidates.find(v => v.height === current.height && v.videoId === current.videoId)) ||
+    (current && candidates.find(v => v.height === current.height)) ||
+    candidates[0];
+
+  if (!target) return false;
+  player.selectVariantTrack(target, true);
+  debugLine('Selected audio track', { trackId, target });
+  return true;
+}
+
+function applyCastActiveTrackIds(activeTrackIds = []) {
+  const ids = Array.isArray(activeTrackIds) ? activeTrackIds.map(Number) : [];
+  const textIds = ids.filter(id => castTrackMap.get(id)?.kind === 'text');
+  const audioIds = ids.filter(id => castTrackMap.get(id)?.kind === 'audio');
+
+  if (audioIds.length) selectAudioTrackByCastTrackId(audioIds[0]);
+
+  if (player) {
+    if (textIds.length) {
+      const info = castTrackMap.get(textIds[0]);
+      if (info && info.textTrack) {
+        player.selectTextTrack(info.textTrack);
+        player.setTextTrackVisibility(true);
+        debugLine('Selected text track', { trackId: textIds[0], textTrack: info.textTrack });
+      }
+    } else if (player.setTextTrackVisibility) {
+      player.setTextTrackVisibility(false);
+      debugLine('Text tracks disabled');
+    }
+  }
+
+  currentActiveTrackIds = ids;
+  if (currentMediaInfoForStatus) currentMediaInfoForStatus.activeTrackIds = ids;
+  try {
+    if (playerManagerRef && typeof playerManagerRef.broadcastStatus === 'function') {
+      playerManagerRef.broadcastStatus(true);
+    }
+  } catch (e) {}
+}
+
+function interceptMessage(playerManager, messageTypeName, handler) {
+  const messageType = cast?.framework?.messages?.MessageType?.[messageTypeName];
+  if (!messageType) {
+    debugLine('CAF message type unavailable', messageTypeName);
+    return;
+  }
+  try {
+    playerManager.setMessageInterceptor(messageType, handler);
+  } catch (e) {
+    debugLine('Failed to install interceptor', messageTypeName, e);
+  }
+}
+
 async function loadContent(mediaInfo) {
   const customData = mediaInfo.customData || {};
   const drm = customData.drm || {};
@@ -692,10 +885,7 @@ async function loadContent(mediaInfo) {
 
   shakaPlayer.configure(config);
 
-  const combinedHeaders = {
-    ...(customData.headers || {}),
-    ...(drm.headers || {})
-  };
+  const combinedHeaders = headerObjectFromCustomData(customData);
   installNetworkingDebug(shakaPlayer, combinedHeaders);
 
   log('contentUrl', contentUrl);
@@ -712,9 +902,19 @@ async function loadContent(mediaInfo) {
     throw e;
   }
 
-  try { lastTracks = {variantTracks: shakaPlayer.getVariantTracks(), textTracks: shakaPlayer.getTextTracks(), stats: shakaPlayer.getStats()}; } catch(e) {}
+  let trackState = null;
+  try {
+    trackState = collectCastTracksFromShaka(shakaPlayer);
+    lastTracks = {
+      ...(lastTracks || {}),
+      stats: shakaPlayer.getStats ? shakaPlayer.getStats() : null
+    };
+  } catch(e) {
+    debugLine('collectCastTracks failed', e);
+  }
   videoSnapshot('after-load');
   setStatus('Playing');
+  return trackState;
 }
 
 async function main() {
@@ -722,7 +922,7 @@ async function main() {
   window.addEventListener('error', e => showError('WINDOW ERROR', {message:e.message, filename:e.filename, lineno:e.lineno, colno:e.colno, error:e.error}));
   window.addEventListener('unhandledrejection', e => showError('UNHANDLED REJECTION', e.reason));
   shaka.polyfill.installAll();
-  if (shaka.log && shaka.log.setLevel) { try { shaka.log.setLevel(shaka.log.Level.DEBUG); } catch(e) {} }
+  if (shaka.log && shaka.log.setLevel) { try { shaka.log.setLevel(debugEnabled ? shaka.log.Level.DEBUG : shaka.log.Level.WARNING); } catch(e) {} }
 
   if (!shaka.Player.isBrowserSupported()) {
     setStatus('Shaka not supported');
@@ -731,6 +931,18 @@ async function main() {
 
   const context = cast.framework.CastReceiverContext.getInstance();
   const playerManager = context.getPlayerManager();
+  playerManagerRef = playerManager;
+
+  try {
+    playerManager.setSupportedMediaCommands(
+      cast.framework.messages.Command.ALL_BASIC_MEDIA |
+      cast.framework.messages.Command.QUEUE_NEXT |
+      cast.framework.messages.Command.QUEUE_PREV,
+      true
+    );
+  } catch (e) {
+    debugLine('setSupportedMediaCommands failed', e);
+  }
 
   // v7.1 safe remote debug controls.
   // Do not capture TV remote keys globally; instead let the sender request QR/debug actions.
@@ -752,24 +964,6 @@ async function main() {
           showDebugQr();
         }
         if (data.action === 'hideQr' && qrPanel) qrPanel.classList.remove('visible');
-        if (data.action === 'exportLog' || data.action === 'getLog') {
-          enableDebug('remote exportLog');
-          const payload = makeDebugPayloadForExport();
-          try {
-            context.sendCustomMessage(
-              'urn:x-cast:debug',
-              event.senderId,
-              {
-                type: 'debugLog',
-                payload,
-                generatedAt: new Date().toISOString()
-              }
-            );
-            debugLine('DEBUG LOG sent to sender', { bytes: payload.length, senderId: event.senderId });
-          } catch (sendError) {
-            debugLine('DEBUG LOG send failed', String(sendError && sendError.message || sendError));
-          }
-        }
         if (data.action === 'nextPage') scrollDebugByPages(1);
         if (data.action === 'prevPage') scrollDebugByPages(-1);
         if (data.action === 'auto') {
@@ -793,6 +987,41 @@ async function main() {
     debugLine('CAF PLAYER_LOAD_COMPLETE', event);
   });
 
+
+  interceptMessage(playerManager, 'PLAY', requestData => {
+    debugLine('CAF PLAY', requestData);
+    video.play && video.play().catch(e => debugLine('video.play failed', e));
+    return requestData;
+  });
+
+  interceptMessage(playerManager, 'PAUSE', requestData => {
+    debugLine('CAF PAUSE', requestData);
+    video.pause && video.pause();
+    return requestData;
+  });
+
+  interceptMessage(playerManager, 'SEEK', requestData => {
+    debugLine('CAF SEEK', requestData);
+    if (typeof requestData.currentTime === 'number' && Number.isFinite(requestData.currentTime)) {
+      video.currentTime = requestData.currentTime;
+    }
+    return requestData;
+  });
+
+  interceptMessage(playerManager, 'STOP', requestData => {
+    debugLine('CAF STOP', requestData);
+    try { if (player) player.unload(); } catch(e) {}
+    try { video.pause(); video.removeAttribute('src'); video.load(); } catch(e) {}
+    return requestData;
+  });
+
+  interceptMessage(playerManager, 'EDIT_TRACKS_INFO', requestData => {
+    debugLine('CAF EDIT_TRACKS_INFO', requestData);
+    const ids = requestData.activeTrackIds || [];
+    applyCastActiveTrackIds(ids);
+    return requestData;
+  });
+
   playerManager.setMessageInterceptor(
     cast.framework.messages.MessageType.LOAD,
     async loadRequestData => {
@@ -803,7 +1032,11 @@ async function main() {
         if (customData.debug) enableDebug('LOAD debug');
 
         log('LOAD request', loadRequestData);
-        await loadContent(mediaInfo);
+        const trackState = await loadContent(mediaInfo);
+        if (trackState) {
+          updateCastMediaTracksOnStatus(mediaInfo, trackState);
+          loadRequestData.activeTrackIds = trackState.activeTrackIds;
+        }
 
         return loadRequestData;
       } catch (error) {
