@@ -1,14 +1,51 @@
-# Chromecast Shaka Receiver - v2 base + native Shaka UI
+# ETB CAF Receiver
 
-This version intentionally uses the previously working v2 receiver as the base.
+This build intentionally uses the native Chromecast CAF player UI only:
 
-Changes:
-- Keeps the v2 Cast/CAF load path, Cloudflare header injection, DRM/ClearKey support and debug-on-error plumbing.
-- Removes custom playback overlays and focus engines.
-- Loads Shaka UI (`shaka-player.ui.js` + `controls.css`) and creates `shaka.ui.Overlay(player, container, video)`.
-- Status overlay is hidden by default so it cannot cover the video.
-- Debug overlay is still opt-in only via `customData.debug` or `?debug=1`.
-- Cloudflare headers are injected only when `customData.headers` or `customData.drm.headers` are present.
+- `<cast-media-player>` for TV controls and DPAD navigation.
+- CAF/Shaka internal playback for HLS/DASH.
+- No custom playback overlay.
+- No custom focus manager.
+- No Shaka UI library.
 
-Recommended Cast media type for MediaFlow HLS:
-`application/x-mpegURL`
+Custom behavior retained:
+
+- Optional `media.customData.headers` / `requestHeaders` for Cloudflare Access or other proxy headers.
+- Optional `media.customData.drm.headers` for license requests.
+- Optional ClearKey config via either:
+
+```js
+mediaInfo.customData = {
+  clearKeys: { '<kid>': '<key>' }
+};
+```
+
+or:
+
+```js
+mediaInfo.customData = {
+  drm: {
+    clearKeys: { '<kid>': '<key>' }
+  }
+};
+```
+
+- Optional debug overlay:
+
+```js
+mediaInfo.customData = { debug: true };
+// or
+mediaInfo.customData = { debugOnError: true };
+```
+
+Typical MediaFlow HLS load:
+
+```js
+const mediaInfo = new chrome.cast.media.MediaInfo(URL, 'application/x-mpegURL');
+mediaInfo.customData = {
+  headers: {
+    'CF-Access-Client-Id': '...',
+    'CF-Access-Client-Secret': '...'
+  }
+};
+```
