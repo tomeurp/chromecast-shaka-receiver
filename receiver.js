@@ -9,6 +9,13 @@ const debugQrBtn = document.getElementById('debugQr');
 const qrPanel = document.getElementById('qrPanel');
 const qrImage = document.getElementById('qrImage');
 const qrText = document.getElementById('qrText');
+const controlsEl = document.getElementById('controls');
+const titleEl = document.getElementById('title');
+const playPauseBtn = document.getElementById('playPause');
+const seekEl = document.getElementById('seek');
+const timeEl = document.getElementById('time');
+const audioSelect = document.getElementById('audioSelect');
+const subsSelect = document.getElementById('subsSelect');
 
 let player = null;
 let lastObjectUrl = null;
@@ -30,6 +37,10 @@ let currentMediaInfoForStatus = null;
 let currentActiveTrackIds = [];
 let castTrackMap = new Map();
 let playerManagerRef = null;
+let controlsHideTimer = null;
+let uiTrackOptions = { audio: [], text: [] };
+let lastMediaTitle = '';
+let isSeekingUi = false;
 
 
 function base64UrlEncodeUtf8(text) {
@@ -439,8 +450,155 @@ function log(...args) {
 }
 
 function setStatus(text) {
-  statusEl.textContent = text;
+  if (statusEl) statusEl.textContent = text;
   debugLine('STATUS:', text);
+  if (titleEl && !lastMediaTitle) titleEl.textContent = text;
+}
+
+
+function formatTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
+  const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+  const mTotal = Math.floor(seconds / 60);
+  const m = (mTotal % 60).toString().padStart(2, '0');
+  const h = Math.floor(mTotal / 60);
+  return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
+}
+
+function showControls(reason = 'activity') {
+  if (!document.body) return;
+  document.body.classList.add('controls-visible');
+  clearTimeout(controlsHideTimer);
+  controlsHideTimer = setTimeout(() => {
+    if (video && !video.paused) document.body.classList.remove('controls-visible');
+  }, 4500);
+}
+
+function updatePlaybackUi() {
+  if (playPauseBtn) playPauseBtn.textContent = video && !video.paused ? '❚❚' : '▶';
+  const duration = Number.isFinite(video.duration) ? video.duration : 0;
+  const current = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+  if (seekEl && !isSeekingUi) {
+    seekEl.max = duration || 0;
+    seekEl.value = Math.min(current, duration || current) || 0;
+  }
+  if (timeEl) timeEl.textContent = `${formatTime(current)} / ${formatTime(duration)}`;
+}
+
+function optionLabel(parts) {
+  return parts.filter(Boolean).join(' · ');
+}
+
+function refreshControlsTracksFromShaka() {
+  if (!player) return;
+  const variants = player.getVariantTracks ? player.getVariantTracks() : [];
+  const textTracks = player.getTextTracks ? player.getTextTracks() : [];
+  const audioSeen = new Map();
+  const audioOptions = [];
+  for (const variant of variants) {
+    const key = audioKeyFromVariant(variant);
+    if (audioSeen.has(key)) continue;
+    audioSeen.set(key, true);
+    const language = normalizeTrackLanguage(variant.language || variant.audioLanguage);
+    audioOptions.push({
+      key,
+      label: optionLabel([variant.label || 'Audio', language]),
+      active: !!variant.active,
+    });
+  }
+  const textOptions = textTracks.map(t => ({
+    key: textKeyFromTrack(t),
+    label: optionLabel([t.label || 'Subtitles', normalizeTrackLanguage(t.language)]),
+    active: !!t.active,
+    track: t,
+  }));
+  uiTrackOptions = { audio: audioOptions, text: textOptions };
+
+  if (audioSelect) {
+    const previous = audioSelect.value;
+    audioSelect.innerHTML = '';
+    for (const opt of audioOptions) {
+      const el = document.createElement('option');
+      el.value = opt.key;
+      el.textContent = opt.label;
+      if (opt.active) el.selected = true;
+      audioSelect.appendChild(el);
+    }
+    if (previous && [...audioSelect.options].some(o => o.value === previous)) audioSelect.value = previous;
+    audioSelect.style.display = audioOptions.length > 1 ? '' : 'none';
+  }
+
+  if (subsSelect) {
+    const previous = subsSelect.value;
+    subsSelect.innerHTML = '';
+    const off = document.createElement('option');
+    off.value = 'off';
+    off.textContent = 'Subtitles off';
+    subsSelect.appendChild(off);
+    for (const opt of textOptions) {
+      const el = document.createElement('option');
+      el.value = opt.key;
+      el.textContent = opt.label;
+      if (player.isTextTrackVisible && player.isTextTrackVisible() && opt.active) el.selected = true;
+      subsSelect.appendChild(el);
+    }
+    if (previous && [...subsSelect.options].some(o => o.value === previous)) subsSelect.value = previous;
+    subsSelect.style.display = textOptions.length ? '' : 'none';
+  }
+}
+
+function installControlUiHandlers() {
+  if (controlsEl) {
+    ['mousemove', 'pointermove', 'click', 'touchstart'].forEach(name => {
+      document.addEventListener(name, () => showControls(name), { passive: true });
+    });
+  }
+  if (playPauseBtn) {
+    playPauseBtn.addEventListener('click', () => {
+      if (video.paused) video.play().catch(e => debugLine('UI play failed', e));
+      else video.pause();
+      showControls('playPause');
+    });
+  }
+  if (seekEl) {
+    seekEl.addEventListener('input', () => { isSeekingUi = true; updatePlaybackUi(); showControls('seek'); });
+    seekEl.addEventListener('change', () => {
+      const t = Number(seekEl.value);
+      if (Number.isFinite(t)) video.currentTime = t;
+      isSeekingUi = false;
+      showControls('seekChange');
+    });
+  }
+  if (audioSelect) {
+    audioSelect.addEventListener('change', () => {
+      const key = audioSelect.value;
+      const entry = [...castTrackMap.entries()].find(([, info]) => info.kind === 'audio' && info.key === key);
+      if (entry) selectAudioTrackByCastTrackId(entry[0]);
+      refreshControlsTracksFromShaka();
+      showControls('audio');
+    });
+  }
+  if (subsSelect) {
+    subsSelect.addEventListener('change', () => {
+      const key = subsSelect.value;
+      if (key === 'off') {
+        if (player && player.setTextTrackVisibility) player.setTextTrackVisibility(false);
+      } else {
+        const opt = uiTrackOptions.text.find(t => t.key === key);
+        if (opt && opt.track && player) {
+          player.selectTextTrack(opt.track);
+          player.setTextTrackVisibility(true);
+        }
+      }
+      refreshControlsTracksFromShaka();
+      showControls('subs');
+    });
+  }
+  ['timeupdate', 'durationchange', 'play', 'pause', 'waiting', 'playing', 'loadedmetadata'].forEach(name => {
+    video.addEventListener(name, updatePlaybackUi);
+  });
+  setInterval(updatePlaybackUi, 500);
+  showControls('startup');
 }
 
 function normalizeDrmType(type) {
@@ -623,12 +781,14 @@ async function initPlayer() {
     try { lastTracks = {variantTracks: player.getVariantTracks(), textTracks: player.getTextTracks()}; }
     catch (e) { lastTracks = {error:e.message}; }
     debugLine('SHAKA EVENT adaptation', lastTracks);
+    refreshControlsTracksFromShaka();
   });
 
   player.addEventListener('trackschanged', () => {
     try { lastTracks = {variantTracks: player.getVariantTracks(), textTracks: player.getTextTracks()}; }
     catch (e) { lastTracks = {error:e.message}; }
     debugLine('SHAKA EVENT trackschanged', lastTracks);
+    refreshControlsTracksFromShaka();
   });
 
   player.addEventListener('drmsessionupdate', event => debugLine('SHAKA EVENT drmsessionupdate', event));
@@ -894,6 +1054,8 @@ async function loadContent(mediaInfo) {
   log('shakaConfig', config);
 
   try {
+    lastMediaTitle = (mediaInfo.metadata && mediaInfo.metadata.title) || mediaInfo.title || mediaInfo.contentId || 'Playing';
+    if (titleEl) titleEl.textContent = lastMediaTitle;
     await shakaPlayer.load(contentUrl);
   } catch (e) {
     const described = describeShakaError(e);
@@ -912,6 +1074,9 @@ async function loadContent(mediaInfo) {
   } catch(e) {
     debugLine('collectCastTracks failed', e);
   }
+  refreshControlsTracksFromShaka();
+  updatePlaybackUi();
+  showControls('loaded');
   videoSnapshot('after-load');
   setStatus('Playing');
   return trackState;
@@ -919,6 +1084,7 @@ async function loadContent(mediaInfo) {
 
 async function main() {
   setupDebugControls();
+  installControlUiHandlers();
   window.addEventListener('error', e => showError('WINDOW ERROR', {message:e.message, filename:e.filename, lineno:e.lineno, colno:e.colno, error:e.error}));
   window.addEventListener('unhandledrejection', e => showError('UNHANDLED REJECTION', e.reason));
   shaka.polyfill.installAll();

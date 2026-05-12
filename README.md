@@ -25,3 +25,11 @@ mediaInfo.customData = {
 ```
 
 Local/LAN playback can omit `customData.headers` entirely.
+
+## v3 controls build
+
+- Removes the always-visible bottom-left status text, including the "Playing" overlay.
+- Adds a minimal on-screen control bar with title, play/pause, scrubber, time, audio selector and subtitle selector.
+- Controls auto-hide during playback and reappear on pointer/remote interaction.
+- Keeps Cloudflare Access header injection optional: headers are only applied when `media.customData.headers` is present.
+- Keeps CAF playback/seek/track interceptors so sender controls still work.

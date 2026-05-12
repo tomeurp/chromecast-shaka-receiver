@@ -19,15 +19,66 @@
       background: #000;
     }
 
-    #status {
+    #status { display: none; }
+
+    #controls {
       position: absolute;
       left: 24px;
+      right: 24px;
       bottom: 24px;
+      z-index: 12;
+      display: grid;
+      grid-template-columns: auto 1fr auto auto auto;
+      grid-template-rows: auto auto;
+      gap: 10px 12px;
+      align-items: center;
+      padding: 14px 16px;
+      border-radius: 14px;
       color: #fff;
-      font-size: 18px;
-      opacity: 0.85;
-      text-shadow: 0 1px 4px #000;
-      z-index: 10;
+      background: linear-gradient(to top, rgba(0,0,0,.72), rgba(0,0,0,.48));
+      font: 16px/1.2 system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity .25s ease, transform .25s ease;
+      pointer-events: auto;
+    }
+
+    body.controls-visible #controls,
+    #controls:focus-within,
+    #controls:hover {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    #title {
+      grid-column: 1 / -1;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      opacity: .95;
+      font-weight: 600;
+    }
+
+    #playPause {
+      width: 46px;
+      height: 38px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.28);
+      background: rgba(255,255,255,.12);
+      color: #fff;
+      font-size: 17px;
+    }
+
+    #seek { width: 100%; accent-color: #fff; }
+    #time { min-width: 128px; text-align: right; opacity: .9; font-variant-numeric: tabular-nums; }
+    #audioSelect, #subsSelect {
+      max-width: 230px;
+      color: #fff;
+      background: rgba(20,20,20,.92);
+      border: 1px solid rgba(255,255,255,.28);
+      border-radius: 9px;
+      padding: 8px 10px;
+      font: inherit;
     }
 
     #debugOverlay {
@@ -151,7 +202,15 @@
 </head>
 <body>
   <video id="video" autoplay playsinline></video>
-  <div id="status">Ready</div>
+  <div id="status" aria-hidden="true">Ready</div>
+  <div id="controls">
+    <div id="title">Ready</div>
+    <button id="playPause" type="button">▶</button>
+    <input id="seek" type="range" min="0" max="0" step="0.1" value="0">
+    <div id="time">00:00 / 00:00</div>
+    <select id="audioSelect" title="Audio"></select>
+    <select id="subsSelect" title="Subtitles"></select>
+  </div>
   <div id="debugControls">
     <button id="debugPrev" class="debug-button">◀ Prev</button>
     <button id="debugNext" class="debug-button">Next ▶</button>
