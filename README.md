@@ -79,3 +79,27 @@ mediaInfo.customData = {
 ```
 
 The receiver will only send the CF headers to `https://mfp.tomeurp.com`, not to CDN URLs.
+
+## v2 custom channel (isolated)
+
+This build keeps the stable receiver playback pipeline intact: LOAD handling, ClearKey configuration, scoped Cloudflare headers and playbackConfig are unchanged from the clean v1 base.
+
+It adds an isolated custom Cast namespace for sender apps:
+
+```text
+urn:x-cast:etb.custom
+```
+
+Supported JSON messages:
+
+```json
+{ "type": "ping", "requestId": "optional" }
+{ "type": "getTracks", "requestId": "optional" }
+{ "type": "getState", "requestId": "optional" }
+{ "type": "setTextTrack", "id": 12, "requestId": "optional" }
+{ "type": "setTextTrack", "id": "off", "requestId": "optional" }
+{ "type": "setVariant", "id": 3, "requestId": "optional" }
+{ "type": "setAutoQuality", "requestId": "optional" }
+```
+
+Responses use the same namespace and include `type`, `ok`, `requestId`, `textTracks`, `variantTracks`, `activeTextTrackId`, `activeVariantTrackId`, `textVisible`, and `abrEnabled` when Shaka is available. If native CAF playback is being used and Shaka is not available, the response is still successful but reports empty track lists and `shakaAvailable:false`.
