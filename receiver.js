@@ -202,15 +202,8 @@ function normalizeLoadRequest(loadRequestData) {
     media.metadata.title = currentCustomData.title || 'ETB';
   }
 
-  // Style Cast/CAF-rendered text tracks without the heavy black box.
-  if (!media.textTrackStyle) {
-    media.textTrackStyle = new cast.framework.messages.TextTrackStyle();
-    media.textTrackStyle.backgroundColor = '#00000000';
-    media.textTrackStyle.foregroundColor = '#FFFFFFFF';
-    media.textTrackStyle.edgeType = cast.framework.messages.TextTrackEdgeType.OUTLINE;
-    media.textTrackStyle.edgeColor = '#000000FF';
-    media.textTrackStyle.fontScale = 1.0;
-  }
+  // Do not force textTrackStyle here. The sender controls subtitles style
+  // via GCKRemoteMediaClient.setTextTrackStyle(), including background/window.
 
   log('LOAD', {
     contentId: media.contentId,
@@ -557,14 +550,8 @@ playerManager.setMediaPlaybackInfoHandler((loadRequestData, playbackConfig) => {
 playerManager.setMessageInterceptor(
   cast.framework.messages.MessageType.EDIT_TRACKS_INFO,
   request => {
-    if (request && request.activeTrackIds && request.activeTrackIds.length) {
-      request.textTrackStyle = request.textTrackStyle || new cast.framework.messages.TextTrackStyle();
-      request.textTrackStyle.backgroundColor = '#00000000';
-      request.textTrackStyle.foregroundColor = '#FFFFFFFF';
-      request.textTrackStyle.edgeType = cast.framework.messages.TextTrackEdgeType.OUTLINE;
-      request.textTrackStyle.edgeColor = '#000000FF';
-      request.textTrackStyle.fontScale = 1.0;
-    }
+    // Preserve sender-provided textTrackStyle. Older receiver versions forced
+    // transparent backgrounds here, which overrode the iOS subtitle style UI.
     return request;
   }
 );
